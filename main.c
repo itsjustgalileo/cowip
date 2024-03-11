@@ -1,5 +1,3 @@
-#include <stdbool.h>
-
 #include "./rom.h"
 #include "./cpu.h"
 

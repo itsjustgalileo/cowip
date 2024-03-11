@@ -11,6 +11,18 @@ void cpu_write(addr address, byte data) {
     memory[address] = data;
 }
 
+void cpu_set_flag(cpu *c, byte flag, bool condition) {
+    if (condition) {
+        c->S |= flag;
+    } else {
+        c->S &= ~flag;
+    }
+}
+
+byte cpu_get_flag(cpu *c, byte flag) {
+    return (c->S & flag) ? 1 : 0;
+}
+
 void cpu_init(cpu* c) {
     cpu_code(c);
 
@@ -28,6 +40,32 @@ void cpu_init(cpu* c) {
     c->nmi = TIED_HIGH;
     c->reset = TIED_LOW;
     c->irq = TIED_HIGH;
+}
+
+byte cpu_decode(cpu *c) {
+    if(c->code[c->IR].addressing_mode != &IMM)
+        c->data_bus = cpu_read(c->address_bus);
+    return c->data_bus;
+}
+
+void cpu_nmi(cpu *c) {
+    cpu_write(0x0100 + c->P, (c->PC >> 8) & 0x00FF);
+	c->P--;
+	cpu_write(0x0100 + c->P, c->PC & 0x00FF);
+	c->P--;
+
+	cpu_set_flag(c, c->B, 0);
+	cpu_set_flag(c, c->U, 1);
+	cpu_set_flag(c, c->I, 1);
+	cpu_write(0x0100 + c->P, c->S);
+	c->P--;
+
+	c->address_bus = 0xFFFA;
+	addr lo = cpu_read(c->address_bus + 0);
+	addr hi = cpu_read(c->address_bus + 1);
+	c->PC = (hi << 8) | lo;
+
+	c->cycles = 8;
 }
 
 void cpu_reset(cpu* c) {
@@ -48,14 +86,44 @@ void cpu_reset(cpu* c) {
     
 }
 
+void cpu_irq(cpu *c) {
+    if (cpu_get_flag(c, c->I) == 0)
+	{
+		// Push the program counter to the stack. It's 16-bits dont
+		// forget so that takes two pushes
+		cpu_write(0x0100 + c->P, (c->PC >> 8) & 0x00FF);
+		c->P--;
+		cpu_write(0x0100 + c->P, c->PC & 0x00FF);
+		c->P--;
+
+		// Then Push the status register to the stack
+		cpu_set_flag(c, c->B, 0);
+		cpu_set_flag(c, c->U, 1);
+		cpu_set_flag(c, c->I, 1);
+		cpu_write(0x0100 + c->P, c->S);
+		c->P--;
+
+		// Read new program counter location from fixed address
+		c->address_bus = 0xFFFE;
+		addr lo = cpu_read(c->address_bus + 0);
+		addr hi = cpu_read(c->address_bus + 1);
+		c->PC = (hi << 8) | lo;
+
+		// IRQs take time
+		c->cycles = 7;
+	}
+}
+
 void cpu_clock(cpu *c) {
     if (c->cycles == 0) {
+        cpu_set_flag(c, c->U, true);
         c->IR = c->data_bus;
         c->PC++;
         c->cycles = c->code[c->IR].cycles;
         byte cycle1 = c->code[c->IR].addressing_mode(c);
         byte cycle2 = c->code[c->IR].opcode(c);
         c->cycles += (cycle1 & cycle2);
+        cpu_set_flag(c, c->U, true);
     }
     c->cycles--;
 }
@@ -76,73 +144,82 @@ byte ACC(cpu *c) {
 }
 
 byte IMM(cpu *c) {
-    c->data_bus = cpu_read(c->PC);
+    c->address_bus = c->PC++;
     return 0;
 }
 
 byte ZPG(cpu *c) {
-    c->address_bus = cpu_read(c->PC++) & 0xFF;
-    c->data_bus = cpu_read(c->address_bus);
-    return 0;
+    c->address_bus = cpu_read(c->PC);
+    c->PC++;
+	c->address_bus &= 0x00FF;	return 0;
 }
 
 byte ZPX(cpu *c) { 
-    c->address_bus = cpu_read(c->PC++) & 0xFF;
-    c->data_bus = cpu_read(c->address_bus + c->X);
+    c->address_bus = cpu_read(c->PC + c->X);
+    c->PC++;
+	c->address_bus &= 0x00FF;
     return 0; 
 }
 
 byte ZPY(cpu *c) { 
-    c->address_bus = cpu_read(c->PC++) & 0xFF;
-    c->data_bus = cpu_read(c->address_bus + c->Y);
+    c->address_bus = cpu_read(c->PC + c->Y);
+    c->PC++;
+	c->address_bus &= 0x00FF;
     return 0; 
 }
 
 byte ABS(cpu *c) {
     // Read the low byte first, then increment the PC
-    byte lowByte = cpu_read(c->PC++);
+    byte lo = cpu_read(c->PC);
+    c->PC++;
     // Read the high byte next, PC now points to the next instruction or data byte
-    byte highByte = cpu_read(c->PC++);
-    
-    // Combine the low and high bytes into the address_bus, ensuring little-endian order
-    c->address_bus = (highByte << 8) | lowByte;
+    byte hi = cpu_read(c->PC);
+    c->PC++;
 
-    // Now you can read from the address_bus
-    c->data_bus = cpu_read(c->address_bus);
-    
+    // Combine the low and high bytes into the address_bus, ensuring little-endian order
+    c->address_bus = (hi << 8) | lo;
+
     return 0;
 }
 
 byte ABX(cpu *c) {
-    word baseAddress = (cpu_read(c->PC++) | (cpu_read(c->PC++) << 8));
-    word finalAddress = baseAddress + c->X;
+    addr lo = cpu_read(c->PC);
+	c->PC++;
+	addr hi = cpu_read(c->PC);
+	c->PC++;
 
-    // Check if adding X crosses a page boundary
-    byte pageCrossed = ((baseAddress & 0xFF00) != (finalAddress & 0xFF00));
+	c->address_bus = (hi << 8) | lo;
+	c->address_bus += c->X;
 
-    c->address_bus = finalAddress;
-    c->data_bus = cpu_read(c->address_bus);
-
-    // Return 1 if a page boundary was crossed, to potentially adjust cycles for certain instructions
-    return pageCrossed;
+	if ((c->address_bus & 0xFF00) != (hi << 8))
+		return 1;
+	else
+		return 0;
 }
 
 byte ABY(cpu *c) { 
-    word baseAddress = (cpu_read(c->PC++) | (cpu_read(c->PC++) << 8));
-    word finalAddress = baseAddress + c->Y;
+    addr lo = cpu_read(c->PC);
+	c->PC++;
+	addr hi = cpu_read(c->PC);
+	c->PC++;
 
-    // Check if adding X crosses a page boundary
-    byte pageCrossed = ((baseAddress & 0xFF00) != (finalAddress & 0xFF00));
+	c->address_bus = (hi << 8) | lo;
+	c->address_bus += c->Y;
 
-    c->address_bus = finalAddress;
-    c->data_bus = cpu_read(c->address_bus);
-
-    // Return 1 if a page boundary was crossed, to potentially adjust cycles for certain instructions
-    return pageCrossed;
+	if ((c->address_bus & 0xFF00) != (hi << 8))
+		return 1;
+	else
+		return 0;
 }
 
 byte IND(cpu *c) {
-    word ptr = (cpu_read(c->PC++) | (cpu_read(c->PC++) << 8));
+    addr ptr_lo = cpu_read(c->PC);
+    c->PC++;
+
+    addr ptr_hi = cpu_read(c->PC);
+    c->PC++;
+    
+    addr ptr = (ptr_hi << 8) | ptr_lo;
 
     // Handle page boundary bug
     if ((ptr & 0x00FF) == 0x00FF) {
@@ -172,7 +249,8 @@ byte IZY(cpu *c) {
 }
 
 byte IZX(cpu *c) { 
-    addr tmp = cpu_read(c->PC++);
+    addr tmp = cpu_read(c->PC);
+    c->PC++;
 
     addr lo = cpu_read((addr)(tmp + (addr)c->X) & 0xFF);
     addr hi = cpu_read((addr)(tmp + (addr)c->X + 1) & 0xFF);
@@ -183,292 +261,550 @@ byte IZX(cpu *c) {
 }
 
 byte REL(cpu *c) { 
-    c->address_bus = cpu_read(c->PC++);
-    if (c->address_bus & 0x80) c->address_bus |= 0xFF00;
+    c->address_relative = cpu_read(c->PC);
+    c->PC++;
+    if (c->address_relative & 0x80) 
+        c->address_relative |= 0xFF00;
     return 0; 
 }
 
 // LEGAL OPCODES
 byte ADC(cpu *c) {
-    UNUSED(c);
-    return 0;
+    // Grab the data that we are adding to the accumulator
+	cpu_decode(c);
+	
+	// Add is performed in 16-bit domain for emulation to capture any
+	// carry bit, which will exist in bit 8 of the 16-bit word
+	byte temp = (addr)c->A + (addr)c->data_bus + (addr)cpu_get_flag(c, c->C);
+	
+	// The carry flag out exists in the high byte bit 0
+	cpu_set_flag(c, c->C, temp > 255);
+	
+	// The Zero flag is set if the result is 0
+	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0);
+	
+	// The signed Overflow flag is set based on all that up there! :D
+	cpu_set_flag(c, c->V, (~((addr)c->A ^ (addr)c->data_bus) & ((addr)c->A ^ (addr)temp)) & 0x0080);
+	
+	// The negative flag is set to the most significant bit of the result
+	cpu_set_flag(c, c->N, temp & 0x80);
+	
+	// Load the result into the accumulator (it's 8-bit dont forget!)
+	c->A = temp & 0x00FF;
+	
+	// This instruction has the potential to require an additional clock cycle
+	return 1;
 }
 
 byte AND(cpu *c) {
-    UNUSED(c);
-    return 0;
+    byte data = cpu_decode(c);
+    c->A &= data;
+
+    if(c->A == 0x00) {
+        c->Z = 1;
+    }
+
+    if (c->A & 0x80) {
+        c->N = 1;
+    }
+    
+    return 1;
 }
 
 byte ASL(cpu *c) {
-    UNUSED(c);
+    cpu_decode(c);
+	byte temp = (addr)c->data_bus << 1;
+	cpu_set_flag(c, c->C, (temp & 0xFF00) > 0);
+	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x00);
+	cpu_set_flag(c, c->N, temp & 0x80);
+	if (c->code[c->IR].addressing_mode == &IMP)
+		c->A = temp & 0x00FF;
+	else
+		cpu_write(c->address_bus, temp & 0x00FF);
     return 0;
 }
 
 byte BCC(cpu *c) {
-    UNUSED(c);
+    if (cpu_get_flag(c, c->C) == 0)
+	{
+		c->cycles++;
+		c->address_bus = c->PC + c->address_relative;
+		
+		if((c->address_bus & 0xFF00) != (c->PC & 0xFF00))
+			c->cycles++;
+		
+		c->PC = c->address_bus;
+	}
     return 0;
 }
 
 byte BCS(cpu *c) {
-    UNUSED(c);
-    return 0;
+    if (cpu_get_flag(c, c->C) == 1)
+	{
+		c->cycles++;
+		c->address_bus = c->PC + c->address_relative;
+
+		if ((c->address_bus & 0xFF00) != (c->PC & 0xFF00))
+			c->cycles++;
+
+		c->PC = c->address_bus;
+	}
+	return 0;
 }
 
 byte BEQ(cpu *c) {
-    UNUSED(c);
-    return 0;
+    if (cpu_get_flag(c, c->Z) == 1)
+	{
+		c->cycles++;
+		c->address_bus = c->PC + c->address_relative;
+
+		if ((c->address_bus & 0xFF00) != (c->PC & 0xFF00))
+			c->cycles++;
+
+		c->PC = c->address_bus;
+	}
+	return 0;
 }
 
 byte BIT(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_decode(c);
+	byte temp = c->A & c->data_bus;
+	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x00);
+	cpu_set_flag(c, c->N, c->data_bus & (1 << 7));
+	cpu_set_flag(c, c->V, c->data_bus & (1 << 6));
+	return 0;
 }
 
 byte BMI(cpu *c) {
-    UNUSED(c);
-    return 0;
+    if (cpu_get_flag(c, c->N) == 1)
+	{
+		c->cycles++;
+		c->address_bus = c->PC + c->address_relative;
+
+		if ((c->address_bus & 0xFF00) != (c->PC & 0xFF00))
+			c->cycles++;
+
+		c->PC = c->address_bus;
+	}
+	return 0;
 }
 
 byte BNE(cpu *c) {
-    UNUSED(c);
-    return 0;
+    if (cpu_get_flag(c, c->Z) == 0)
+	{
+		c->cycles++;
+		c->address_bus = c->PC + c->address_relative;
+
+		if ((c->address_bus & 0xFF00) != (c->PC & 0xFF00))
+			c->cycles++;
+
+		c->PC = c->address_bus;
+	}
+	return 0;
 }
 
 byte BPL(cpu *c) {
-    UNUSED(c);
-    return 0;
+    if (cpu_get_flag(c, c->N) == 0)
+	{
+		c->cycles++;
+		c->address_bus = c->PC + c->address_relative;
+
+		if ((c->address_bus & 0xFF00) != (c->PC & 0xFF00))
+			c->cycles++;
+
+		c->PC = c->address_bus;
+	}
+	return 0;
 }
 
 byte BRK(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->PC++;
+	
+	cpu_set_flag(c, c->I, 1);
+	cpu_write(0x0100 + c->P, (c->PC >> 8) & 0x00FF);
+	c->P--;
+	cpu_write(0x0100 + c->P, c->PC & 0x00FF);
+	c->P--;
+
+	cpu_set_flag(c, c->B, 1);
+	cpu_write(0x0100 + c->P, c->S);
+	c->P--;
+	cpu_set_flag(c, c->B, 0);
+
+	c->PC = (addr)cpu_read(0xFFFE) | ((addr)cpu_read(0xFFFF) << 8);
+	return 0;
 }
 
 byte BVC(cpu *c) {
-    UNUSED(c);
-    return 0;
+    if (cpu_get_flag(c, c->V) == 0)
+	{
+		c->cycles++;
+		c->address_bus = c->PC + c->address_relative;
+
+		if ((c->address_bus & 0xFF00) != (c->PC & 0xFF00))
+			c->cycles++;
+
+		c->PC = c->address_bus;
+	}
+	return 0;
 }
 
 byte BVS(cpu *c) {
-    UNUSED(c);
-    return 0;
+    if (cpu_get_flag(c, c->V) == 1)
+	{
+		c->cycles++;
+		c->address_bus = c->PC + c->address_relative;
+
+		if ((c->address_bus & 0xFF00) != (c->PC & 0xFF00))
+			c->cycles++;
+
+		c->PC = c->address_bus;
+	}
+	return 0;
 }
 
 byte CLC(cpu *c) {
-    UNUSED(c);
+    cpu_set_flag(c, c->C, false);
     return 0;
 }
 
 byte CLD(cpu *c) {
-    UNUSED(c);
+    cpu_set_flag(c, c->D, false);
     return 0;
 }
 
 byte CLI(cpu *c) {
-    UNUSED(c);
+    cpu_set_flag(c, c->I, false);
     return 0;
 }
 
 byte CLV(cpu *c) {
-    UNUSED(c);
+    cpu_set_flag(c, c->V, false);
     return 0;
 }
 
 byte CMP(cpu *c) {
-    UNUSED(c);
-    return 0;
+	cpu_decode(c);
+	byte temp = (addr)c->A - (addr)c->data_bus;
+	cpu_set_flag(c, c->C, c->A >= c->data_bus);
+	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
+	cpu_set_flag(c, c->N, temp & 0x0080);
+	return 1;
 }
 
 byte CPX(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_decode(c);
+	byte temp = (addr)c->X - (addr)c->data_bus;
+	cpu_set_flag(c, c->C, c->X >= c->data_bus);
+	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
+	cpu_set_flag(c, c->N, temp & 0x0080);
+	return 0;
 }
 
 byte CPY(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_decode(c);
+	byte temp = (addr)c->Y - (addr)c->data_bus;
+	cpu_set_flag(c, c->C, c->Y >= c->data_bus);
+	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
+	cpu_set_flag(c, c->N, temp & 0x0080);
+	return 0;
 }
 
 byte DEC(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_decode(c);
+	byte temp = c->data_bus - 1;
+	cpu_write(c->address_bus, temp & 0x00FF);
+	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
+	cpu_set_flag(c, c->N, temp & 0x0080);
+	return 0;
 }
 
 byte DEX(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->X--;
+	cpu_set_flag(c, c->Z, c->X == 0x00);
+	cpu_set_flag(c, c->N, c->X & 0x80);
+	return 0;
 }
 
 byte DEY(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->Y--;
+	cpu_set_flag(c, c->Z, c->Y == 0x00);
+	cpu_set_flag(c, c->N, c->Y & 0x80);
+	return 0;
 }
 
 byte EOR(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_decode(c);
+	c->A = c->A ^ c->data_bus;	
+	cpu_set_flag(c, c->Z, c->A == 0x00);
+	cpu_set_flag(c, c->N, c->A & 0x80);
+	return 1;
 }
 
 byte INC(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_decode(c);
+	byte temp = c->data_bus + 1;
+	cpu_write(c->address_bus, temp & 0x00FF);
+	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
+	cpu_set_flag(c, c->N, temp & 0x0080);
+	return 0;
 }
 
 byte INX(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->X++;
+	cpu_set_flag(c, c->Z, c->X == 0x00);
+	cpu_set_flag(c, c->N, c->X & 0x80);
+	return 0;
 }
 
 byte INY(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->Y++;
+	cpu_set_flag(c, c->Z, c->X == 0x00);
+	cpu_set_flag(c, c->N, c->X & 0x80);
+	return 0;
 }
 
 byte JMP(cpu *c) {
-    UNUSED(c);
+    c->PC = c->address_bus;
     return 0;
 }
 
 byte JSR(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->PC--;
+
+	cpu_write(0x0100 + c->P, (c->PC >> 8) & 0x00FF);
+	c->P--;
+	cpu_write(0x0100 + c->P, c->PC & 0x00FF);
+	c->P--;
+
+	c->PC = c->address_bus;
+	return 0;
 }
 
 byte LDA(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_decode(c);
+	c->A = c->data_bus;
+	cpu_set_flag(c, c->Z, c->A == 0x00);
+	cpu_set_flag(c, c->N, c->A & 0x80);
+	return 1;
 }
 
 byte LDX(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_decode(c);
+	c->X = c->data_bus;
+	cpu_set_flag(c, c->Z, c->X == 0x00);
+	cpu_set_flag(c, c->N, c->X & 0x80);
+	return 1;
 }
 
 byte LDY(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_decode(c);
+	c->Y = c->data_bus;
+	cpu_set_flag(c, c->Z, c->Y == 0x00);
+	cpu_set_flag(c, c->N, c->Y & 0x80);
+	return 1;
 }
 
 byte LSR(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_decode(c);
+	cpu_set_flag(c, c->C, c->data_bus & 0x0001);
+	byte temp = c->data_bus >> 1;	
+	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
+	cpu_set_flag(c, c->N, temp & 0x0080);
+	if (c->code[c->IR].addressing_mode == &IMP)
+		c->A = temp & 0x00FF;
+	else
+		cpu_write(c->address_bus, temp & 0x00FF);
+	return 0;
 }
 
 byte NOP(cpu *c) {
-    UNUSED(c);
-    return 0;
+    switch (c->IR) {
+	case 0x1C:
+	case 0x3C:
+	case 0x5C:
+	case 0x7C:
+	case 0xDC:
+	case 0xFC:
+		return 1;
+		break;
+	}
+	return 0;
 }
 
 byte ORA(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_decode(c);
+	c->A = c->A | c->data_bus;
+	cpu_set_flag(c, c->Z, c->A == 0x00);
+	cpu_set_flag(c, c->N, c->A & 0x80);
+	return 1;
 }
 
 byte PHA(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_write(0x0100 + c->P, c->A);
+	c->P--;
+	return 0;
 }
 
 byte PHP(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_write(0x0100 + c->P, c->S | c->B | c->U);
+	cpu_set_flag(c, c->B, 0);
+	cpu_set_flag(c, c->U, 0);
+	c->P--;
+	return 0;
 }
 
 byte PLA(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->P++;
+	c->A = cpu_read(0x0100 + c->P);
+	cpu_set_flag(c, c->Z, c->A == 0x00);
+	cpu_set_flag(c, c->N, c->A & 0x80);
+	return 0;
 }
 
 byte PLP(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->P++;
+	c->S = cpu_read(0x0100 + c->P);
+	cpu_set_flag(c, c->U, 1);
+	return 0;
 }
 
 byte ROL(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_decode(c);
+	byte temp = (addr)(c->data_bus << 1) | cpu_get_flag(c, c->C);
+	cpu_set_flag(c, c->C, temp & 0xFF00);
+	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
+	cpu_set_flag(c, c->N, temp & 0x0080);
+	if (c->code[c->IR].addressing_mode == &IMP)
+		c->A = temp & 0x00FF;
+	else
+		cpu_write(c->address_bus, temp & 0x00FF);
+	return 0;
 }
 
 byte ROR(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_decode(c);
+	byte temp = (addr)(cpu_get_flag(c, c->C) << 7) | (c->data_bus >> 1);
+	cpu_set_flag(c, c->C, c->data_bus & 0x01);
+	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x00);
+	cpu_set_flag(c, c->N, temp & 0x0080);
+	if (c->code[c->IR].addressing_mode == &IMP)
+		c->A = temp & 0x00FF;
+	else
+		cpu_write(c->address_bus, temp & 0x00FF);
+	return 0;
 }
 
 byte RTI(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->P++;
+	c->S = cpu_read(0x0100 + c->P);
+	c->S &= ~c->B;
+	c->S &= ~c->U;
+
+	c->P++;
+	c->PC = (addr)cpu_read(0x0100 + c->P);
+	c->P++;
+	c->PC |= (addr)cpu_read(0x0100 + c->P) << 8;
+	return 0;
 }
 
 byte RTS(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->P++;
+	c->PC = (addr)cpu_read(0x0100 + c->P);
+	c->P++;
+	c->PC |= (addr)cpu_read(0x0100 + c->P) << 8;
+	
+	c->PC++;
+	return 0;
 }
 
 byte SBC(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_decode(c);
+	
+	// Operating in 16-bit domain to capture carry out
+	
+	// We can invert the bottom 8 bits with bitwise xor
+	addr value = ((addr)c->data_bus) ^ 0x00FF;
+	
+	// Notice this is exactly the same as addition from here!
+	byte temp = (addr)c->A + value + (addr)cpu_get_flag(c, c->C);
+	cpu_set_flag(c, c->C, temp & 0xFF00);
+	cpu_set_flag(c, c->Z, ((temp & 0x00FF) == 0));
+	cpu_set_flag(c, c->V, (temp ^ (addr)c->A) & (temp ^ value) & 0x0080);
+	cpu_set_flag(c, c->N, temp & 0x0080);
+	c->A = temp & 0x00FF;
+	return 1;
 }
 
 byte SEC(cpu *c) {
-    UNUSED(c);
+    cpu_set_flag(c, c->C, true);
     return 0;
 }
 
 byte SED(cpu *c) {
-    UNUSED(c);
+    cpu_set_flag(c, c->D, true);
     return 0;
 }
 
 byte SEI(cpu *c) {
-    UNUSED(c);
+    cpu_set_flag(c, c->I, true);
     return 0;
 }
 
 byte STA(cpu *c) {
-    UNUSED(c);
+    cpu_write(c->address_bus, c->A);
     return 0;
 }
 
 byte STX(cpu *c) {
-    UNUSED(c);
+    cpu_write(c->address_bus, c->X);
     return 0;
 }
 
 byte STY(cpu *c) {
-    UNUSED(c);
+    cpu_write(c->address_bus, c->Y);
     return 0;
 }
 
 byte TAX(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->X = c->A;
+	cpu_set_flag(c, c->Z, c->X == 0x00);
+	cpu_set_flag(c, c->N, c->X & 0x80);
+	return 0;
 }
 
 byte TAY(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->Y = c->A;
+	cpu_set_flag(c, c->Z, c->Y == 0x00);
+	cpu_set_flag(c, c->N, c->Y & 0x80);
+	return 0;
 }
 
 byte TSX(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->X = c->P;
+	cpu_set_flag(c, c->Z, c->X == 0x00);
+	cpu_set_flag(c, c->N, c->X & 0x80);
+	return 0;
 }
 
 byte TXA(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->A = c->X;
+	cpu_set_flag(c, c->Z, c->A == 0x00);
+	cpu_set_flag(c, c->N, c->A & 0x80);
+	return 0;
 }
 
 byte TXS(cpu *c) {
-    UNUSED(c);
+    c->P = c->X;
     return 0;
 }
 
 byte TYA(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->A = c->Y;
+	cpu_set_flag(c, c->Z, c->A == 0x00);
+	cpu_set_flag(c, c->N, c->A & 0x80);
+	return 0;
 }
-
 
 // ILLEGAL OPCODES USE AT YOUR OWN RISK
 byte ALR(cpu *c) {

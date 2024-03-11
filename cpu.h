@@ -1,6 +1,12 @@
 #ifndef CPU_H_
 #define CPU_H_
 
+#ifndef __cplusplus
+#define bool _Bool
+#define true 1
+#define false 0
+#endif // !__cplusplus
+
 typedef unsigned char byte;
 typedef unsigned short word;
 typedef word addr;
@@ -42,6 +48,7 @@ typedef struct cpu {
     byte irq;
 
     addr address_bus;
+    addr address_relative;
     byte data_bus;
 
     struct code_t {
@@ -56,6 +63,9 @@ typedef struct cpu {
 byte cpu_read(addr address);
 void cpu_write(addr address, byte data);
 
+void cpu_set_flag(cpu *c, byte flag, bool condition);
+byte cpu_get_flag(cpu *c, byte flag);
+
 // cpu state
 void cpu_init(cpu *c);
 void cpu_clock(cpu *c);
@@ -64,6 +74,7 @@ void cpu_reset(cpu *c);
 void cpu_irq(cpu *c);
 
 void cpu_code(cpu *c);
+byte cpu_decode(cpu *c);
 
 // ADDRESSING MODES
 byte IMP(cpu *c);
