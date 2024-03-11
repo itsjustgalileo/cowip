@@ -40,6 +40,12 @@ void cpu_init(cpu* c) {
     c->nmi = TIED_HIGH;
     c->reset = TIED_LOW;
     c->irq = TIED_HIGH;
+
+    cpu_reset(c);
+}
+
+bool cpu_done(cpu *c) {
+    return c->cycles == 0;
 }
 
 byte cpu_decode(cpu *c) {
@@ -116,12 +122,12 @@ void cpu_irq(cpu *c) {
 
 void cpu_clock(cpu *c) {
     if (c->cycles == 0) {
+        c->IR = cpu_read(c->PC);
         cpu_set_flag(c, c->U, true);
-        c->IR = c->data_bus;
         c->PC++;
         c->cycles = c->code[c->IR].cycles;
-        byte cycle1 = c->code[c->IR].addressing_mode(c);
-        byte cycle2 = c->code[c->IR].opcode(c);
+        byte cycle1 = (c->code[c->IR].addressing_mode)(c);
+        byte cycle2 = (c->code[c->IR].opcode)(c);
         c->cycles += (cycle1 & cycle2);
         cpu_set_flag(c, c->U, true);
     }

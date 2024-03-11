@@ -18,6 +18,8 @@ I will try and add some module for i/o and maybe graphics.
 
 to be developped into a nes emulator.
 
+**THIS IS VERY BUGGY**
+
 ---
 
 ## REFERENCES

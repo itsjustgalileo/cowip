@@ -5,13 +5,21 @@ int main(void) {
     cpu c;
     cpu_init(&c);
 
-    rom *r = rom_load("rom.nes");
+    rom *r = rom_load("rom.bin");
+    if(r == NULL) {
+        fprintf(stderr, "failed to load rom file\n");
+        return 1;
+    }
 
+    for (size_t i = 0; i < r->size; i++) {
+        cpu_write(i, r->bytes[i]);
+    }
 
     bool power = true;
     while (power) {
-        if (c.reset == TIED_LOW) cpu_reset(&c);
-        cpu_clock(&c);
+        do {
+            cpu_clock(&c);
+        }while (!cpu_done(&c));
     }
 
     rom_unload(r);

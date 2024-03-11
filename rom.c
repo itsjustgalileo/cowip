@@ -1,5 +1,3 @@
-#include <stdio.h>
-
 #include "./rom.h"
 
 rom *rom_load(const char *path) {

@@ -69,6 +69,8 @@ byte cpu_get_flag(cpu *c, byte flag);
 // cpu state
 void cpu_init(cpu *c);
 void cpu_clock(cpu *c);
+bool cpu_done(cpu *c);
+
 void cpu_nmi(cpu *c);
 void cpu_reset(cpu *c);
 void cpu_irq(cpu *c);

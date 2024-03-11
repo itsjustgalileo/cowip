@@ -1,6 +1,7 @@
 #ifndef ROM_H_
 #define ROM_H_
 
+#include <stdio.h>
 #include <stdlib.h>
 
 typedef struct {
