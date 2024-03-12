@@ -8,17 +8,60 @@
 
 ## PRESENTATION
 
-a 6502 based computer emulation
+A 6502 cpu emulator.
 
 illegal opcodes functions are still not implemented for the cpu.
 
-only the cpu is implemented for now.
-
-I will try and add some module for i/o and maybe graphics.
-
-to be developped into a nes emulator.
+this serves as a base for building 6502-based computers and consoles (C64, Apple II, NES...)
 
 **THIS IS VERY BUGGY**
+
+---
+
+## PREREQUISITES
+
+* C11 compiler
+
+---
+
+## SUPPORTED PLATFORMS
+
+- [X] Windows
+- [X] Linux
+- [X] macOS
+
+---
+
+## HOW TO USE
+
+```c
+#include <stdio.h>
+
+#include "./cpu.h"
+
+int main(void) {
+    cpu *c = cpu_init();
+    if (c == NULL) {
+        fprintf(stderr, "failed to initialize cpu\n");
+        return 2;
+    }
+    cpu_reset(c);
+
+    // load rom into memory here
+
+    bool power = true;
+    while (power) {
+        do {
+            cpu_clock(c);
+        }while (!cpu_done(c));
+    }
+
+    cpu_shutdown(c);
+    
+    return 0;
+}
+
+```
 
 ---
 

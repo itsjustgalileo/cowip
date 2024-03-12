@@ -1,27 +1,23 @@
-#include "./rom.h"
+#include <stdio.h>
+
 #include "./cpu.h"
 
 int main(void) {
-    cpu c;
-    cpu_init(&c);
-
-    rom *r = rom_load("rom.bin");
-    if(r == NULL) {
-        fprintf(stderr, "failed to load rom file\n");
-        return 1;
+    cpu *c = cpu_init();
+    if (c == NULL) {
+        fprintf(stderr, "failed to initialize cpu\n");
+        return 2;
     }
-
-    for (size_t i = 0; i < r->size; i++) {
-        cpu_write(i, r->bytes[i]);
-    }
+    cpu_reset(c);
 
     bool power = true;
     while (power) {
         do {
-            cpu_clock(&c);
-        }while (!cpu_done(&c));
+            cpu_clock(c);
+        }while (!cpu_done(c));
     }
 
-    rom_unload(r);
+    cpu_shutdown(c);
+    
     return 0;
 }

@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "./cpu.h"
 
 // TODO: separate into different memory sections
@@ -23,7 +25,11 @@ byte cpu_get_flag(cpu *c, byte flag) {
     return (c->S & flag) ? 1 : 0;
 }
 
-void cpu_init(cpu* c) {
+cpu *cpu_init(void) {
+    cpu *c = (cpu *)malloc(sizeof(cpu));
+    if(c == NULL) {
+        return NULL;
+    }
     cpu_code(c);
 
     // reset cycle 0
@@ -36,12 +42,16 @@ void cpu_init(cpu* c) {
     c->X = 0x00;
     c->Y = 0x00;
     c->P = 0x00;
-    c->S = 0b00000010;
+    c->S = 0x02;
     c->nmi = TIED_HIGH;
     c->reset = TIED_LOW;
     c->irq = TIED_HIGH;
 
-    cpu_reset(c);
+    return c;
+}
+
+void cpu_shutdown(cpu *c) {
+    free(c);
 }
 
 bool cpu_done(cpu *c) {
@@ -238,7 +248,8 @@ byte IND(cpu *c) {
 }
 
 byte IZY(cpu *c) { 
-    addr tmp = cpu_read(c->PC++);
+    addr tmp = cpu_read(c->PC);
+    c->PC++;
 
     addr lo = cpu_read(tmp & 0xFF);
     addr hi = cpu_read((tmp + 1) & 0xFF);

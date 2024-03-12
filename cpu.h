@@ -67,7 +67,9 @@ void cpu_set_flag(cpu *c, byte flag, bool condition);
 byte cpu_get_flag(cpu *c, byte flag);
 
 // cpu state
-void cpu_init(cpu *c);
+cpu *cpu_init(void);
+void cpu_shutdown(cpu *c);
+
 void cpu_clock(cpu *c);
 bool cpu_done(cpu *c);
 
@@ -92,7 +94,6 @@ byte IND(cpu *c);
 byte IZY(cpu *c);
 byte IZX(cpu *c);
 byte REL(cpu *c);
-
 
 // LEGAL OPCODES
 byte ADC(cpu *c);
@@ -175,6 +176,5 @@ byte TAS(cpu *c);
 byte USBC(cpu *c);
 byte NOP_undoc(cpu *c);
 byte JAM (cpu *c);
-
 
 #endif // !CPU_H_
