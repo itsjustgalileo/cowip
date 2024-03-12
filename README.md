@@ -57,7 +57,7 @@ int main(void) {
     }
 
     cpu_shutdown(c);
-    
+
     return 0;
 }
 
@@ -67,4 +67,5 @@ int main(void) {
 
 ## REFERENCES
 
-* [6502 opcodes](https://www.masswerk.at/6502/6502_instruction_set.html)
+* [NesDev Wiki](https://www.nesdev.org/wiki/NES_reference_guide)
+* [6502 inner workings](https://www.masswerk.at/6502/6502_instruction_set.html)
