@@ -65,6 +65,7 @@ int main(void) {
 make
 ./emulator <ROM FILE PATH>
 # if no rom is provided a default ROM full of NOP is loaded
+```
 
 ---
 
