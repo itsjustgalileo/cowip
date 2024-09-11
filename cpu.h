@@ -1,33 +1,31 @@
 #ifndef CPU_H_
 #define CPU_H_
 
-#ifndef __cplusplus
-#define bool _Bool
-#define true 1
-#define false 0
-#endif // !__cplusplus
+#include "./arch.h"
 
-typedef unsigned char byte;
-typedef unsigned short word;
-typedef word addr;
+#define CPU_JAM 1 // THIS IS ALWAYS 1
 
 // interrupt vectors
 #define NMI 0xFFFA // 0xFFFB
 #define RESET 0xFFFC // 0xFFFD
 #define IRQ 0xFFFE // 0xFFFF
 
-#define TIED_HIGH 0
-#define TIED_LOW 1
+typedef struct Board Board;
 
-#define UNUSED(var) (void)var;
-
-// 6502 CPU
+// 8-BIT CPU
 typedef struct cpu {
-    byte IR;      // instruction register
-    byte A, X, Y; // GP registers
-    byte P;       // stack pointer
+    // connection to motherboard
+    Board *bc;
+    
+    byte IR;       // instruction register
+    byte A;        // accumulator
+    byte X, Y;     // index registers
+    byte SP;       // stack pointer
+                   // I know that all 1 byte register are written with one letter
+                   // but technically this refers to $0100 + the stack pointer!
+                   // so it's 2 bytes
     union {
-        byte S; // status register
+        byte P;    // processor status register
         struct {               
             byte C : 1; // carry
             byte Z : 1; // zero
@@ -60,13 +58,13 @@ typedef struct cpu {
 } cpu;
 
 // memory operations
-byte cpu_read(addr address);
-void cpu_write(addr address, byte data);
+byte cpu_read(cpu *c, addr address);
+void cpu_write(cpu *c, addr address, byte data);
 
+// cpu state
 void cpu_set_flag(cpu *c, byte flag, bool condition);
 byte cpu_get_flag(cpu *c, byte flag);
 
-// cpu state
 cpu *cpu_init(void);
 void cpu_shutdown(cpu *c);
 

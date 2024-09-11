@@ -1,23 +1,24 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 
-#include "./cpu.h"
+#include "./board.h"
 
 int main(void) {
-    cpu *c = cpu_init();
-    if (c == NULL) {
-        fprintf(stderr, "failed to initialize cpu\n");
-        return 2;
+    Board *b = board_init("./roms/nop.bin");
+    if (b == NULL) {
+        printf("failed to init board\n");
+        return 5;
     }
-    cpu_reset(c);
 
     bool power = true;
     while (power) {
-        do {
-            cpu_clock(c);
-        }while (!cpu_done(c));
+        __run(b);
+        debug_print_CPU(b->c);
+        system("clear");
     }
 
-    cpu_shutdown(c);
+    board_shutdown(b);
     
     return 0;
 }

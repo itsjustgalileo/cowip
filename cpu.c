@@ -1,28 +1,29 @@
+#include <stdio.h>
 #include <stdlib.h>
 
-#include "./cpu.h"
+#include "./board.h"
 
-// TODO: separate into different memory sections
-static byte memory[64 * 1024];
-
-byte cpu_read(addr address) {
-    return memory[address];
+// Memory Read Function
+byte cpu_read(cpu *c, addr address) {
+    return board_read(c->bc, address);
 }
 
-void cpu_write(addr address, byte data) {
-    memory[address] = data;
+// Memory Write Function
+void cpu_write(cpu *c, addr address, byte data) {
+    board_write(c->bc, address, data);
 }
+
 
 void cpu_set_flag(cpu *c, byte flag, bool condition) {
     if (condition) {
-        c->S |= flag;
+        c->P |= flag;
     } else {
-        c->S &= ~flag;
+        c->P &= ~flag;
     }
 }
 
 byte cpu_get_flag(cpu *c, byte flag) {
-    return (c->S & flag) ? 1 : 0;
+    return (c->P & flag) ? 1 : 0;
 }
 
 cpu *cpu_init(void) {
@@ -32,6 +33,8 @@ cpu *cpu_init(void) {
     }
     cpu_code(c);
 
+    c->bc = NULL;
+    
     // reset cycle 0
     c->cycles = 0;
     c->address_bus = 0x00FF;
@@ -41,12 +44,12 @@ cpu *cpu_init(void) {
     c->A = 0xAA;
     c->X = 0x00;
     c->Y = 0x00;
-    c->P = 0x00;
-    c->S = 0x02;
+    c->SP = 0x00;
+    c->P = 0x02;
     c->nmi = TIED_HIGH;
     c->reset = TIED_LOW;
     c->irq = TIED_HIGH;
-
+    
     return c;
 }
 
@@ -59,26 +62,26 @@ bool cpu_done(cpu *c) {
 }
 
 byte cpu_decode(cpu *c) {
-    if(c->code[c->IR].addressing_mode != &IMM)
-        c->data_bus = cpu_read(c->address_bus);
+    if(c->code[c->IR].addressing_mode != &IMP && c->code[c->IR].addressing_mode != &IMP) // CHECK THIS FIRST FOR ANY LATER BUGS
+        c->data_bus = cpu_read(c, c->address_bus);
     return c->data_bus;
 }
 
 void cpu_nmi(cpu *c) {
-    cpu_write(0x0100 + c->P, (c->PC >> 8) & 0x00FF);
-	c->P--;
-	cpu_write(0x0100 + c->P, c->PC & 0x00FF);
-	c->P--;
+    cpu_write(c, STACK_BASE + c->SP, (c->PC >> 8) & 0x00FF);
+	c->SP--;
+	cpu_write(c, STACK_BASE + c->SP, c->PC & 0x00FF);
+	c->SP--;
 
 	cpu_set_flag(c, c->B, 0);
 	cpu_set_flag(c, c->U, 1);
 	cpu_set_flag(c, c->I, 1);
-	cpu_write(0x0100 + c->P, c->S);
-	c->P--;
+	cpu_write(c, STACK_BASE + c->SP, c->P);
+	c->SP--;
 
-	c->address_bus = 0xFFFA;
-	addr lo = cpu_read(c->address_bus + 0);
-	addr hi = cpu_read(c->address_bus + 1);
+	c->address_bus = NMI;
+	addr lo = cpu_read(c, c->address_bus + 0);
+	addr hi = cpu_read(c, c->address_bus + 1);
 	c->PC = (hi << 8) | lo;
 
 	c->cycles = 8;
@@ -87,19 +90,17 @@ void cpu_nmi(cpu *c) {
 void cpu_reset(cpu* c) {
     // Assume reset is already initiated; prepare for the reset sequence
     
-    c->S = 0xFD; // Stack pointer usually set to 0xFF on reset
+    c->SP = 0xFD; // Stack pointer usually set to 0xFF on reset
     c->P = 0x24; // Status register with UNUSED and IRQ disable flags set
         
     // Read reset vector into PC
-    word lowByte = cpu_read(RESET);
-    word highByte = cpu_read(RESET + 1);
+    word lowByte = cpu_read(c, RESET);
+    word highByte = cpu_read(c, RESET + 1);
     c->PC = (highByte << 8) | lowByte;
 
-    c->data_bus = cpu_read(c->PC);
     // Reset complete; further initialization as needed
     c->reset = TIED_HIGH; // Indicate reset completed
-    c->cycles = 0; // Ready for next operation
-    
+    c->cycles = 8; // Ready for next operation 
 }
 
 void cpu_irq(cpu *c) {
@@ -107,22 +108,22 @@ void cpu_irq(cpu *c) {
 	{
 		// Push the program counter to the stack. It's 16-bits dont
 		// forget so that takes two pushes
-		cpu_write(0x0100 + c->P, (c->PC >> 8) & 0x00FF);
-		c->P--;
-		cpu_write(0x0100 + c->P, c->PC & 0x00FF);
-		c->P--;
+		cpu_write(c, STACK_BASE + c->SP, (c->PC >> 8) & 0x00FF);
+		c->SP--;
+		cpu_write(c, STACK_BASE + c->SP, c->PC & 0x00FF);
+		c->SP--;
 
 		// Then Push the status register to the stack
 		cpu_set_flag(c, c->B, 0);
 		cpu_set_flag(c, c->U, 1);
 		cpu_set_flag(c, c->I, 1);
-		cpu_write(0x0100 + c->P, c->S);
-		c->P--;
+		cpu_write(c, STACK_BASE + c->SP, c->P);
+		c->SP--;
 
 		// Read new program counter location from fixed address
-		c->address_bus = 0xFFFE;
-		addr lo = cpu_read(c->address_bus + 0);
-		addr hi = cpu_read(c->address_bus + 1);
+		c->address_bus = IRQ;
+		addr lo = cpu_read(c, c->address_bus + 0);
+		addr hi = cpu_read(c, c->address_bus + 1);
 		c->PC = (hi << 8) | lo;
 
 		// IRQs take time
@@ -132,7 +133,7 @@ void cpu_irq(cpu *c) {
 
 void cpu_clock(cpu *c) {
     if (c->cycles == 0) {
-        c->IR = cpu_read(c->PC);
+        c->IR = cpu_read(c, c->PC);
         cpu_set_flag(c, c->U, true);
         c->PC++;
         c->cycles = c->code[c->IR].cycles;
@@ -165,20 +166,21 @@ byte IMM(cpu *c) {
 }
 
 byte ZPG(cpu *c) {
-    c->address_bus = cpu_read(c->PC);
+    c->address_bus = cpu_read(c, c->PC);
     c->PC++;
-	c->address_bus &= 0x00FF;	return 0;
+	c->address_bus &= 0x00FF;
+    return 0;
 }
 
 byte ZPX(cpu *c) { 
-    c->address_bus = cpu_read(c->PC + c->X);
+    c->address_bus = cpu_read(c, c->PC + c->X);
     c->PC++;
 	c->address_bus &= 0x00FF;
     return 0; 
 }
 
 byte ZPY(cpu *c) { 
-    c->address_bus = cpu_read(c->PC + c->Y);
+    c->address_bus = cpu_read(c, c->PC + c->Y);
     c->PC++;
 	c->address_bus &= 0x00FF;
     return 0; 
@@ -186,10 +188,10 @@ byte ZPY(cpu *c) {
 
 byte ABS(cpu *c) {
     // Read the low byte first, then increment the PC
-    byte lo = cpu_read(c->PC);
+    byte lo = cpu_read(c, c->PC);
     c->PC++;
     // Read the high byte next, PC now points to the next instruction or data byte
-    byte hi = cpu_read(c->PC);
+    byte hi = cpu_read(c, c->PC);
     c->PC++;
 
     // Combine the low and high bytes into the address_bus, ensuring little-endian order
@@ -199,9 +201,9 @@ byte ABS(cpu *c) {
 }
 
 byte ABX(cpu *c) {
-    addr lo = cpu_read(c->PC);
+    addr lo = cpu_read(c, c->PC);
 	c->PC++;
-	addr hi = cpu_read(c->PC);
+	addr hi = cpu_read(c, c->PC);
 	c->PC++;
 
 	c->address_bus = (hi << 8) | lo;
@@ -214,9 +216,9 @@ byte ABX(cpu *c) {
 }
 
 byte ABY(cpu *c) { 
-    addr lo = cpu_read(c->PC);
+    addr lo = cpu_read(c, c->PC);
 	c->PC++;
-	addr hi = cpu_read(c->PC);
+	addr hi = cpu_read(c, c->PC);
 	c->PC++;
 
 	c->address_bus = (hi << 8) | lo;
@@ -229,30 +231,30 @@ byte ABY(cpu *c) {
 }
 
 byte IND(cpu *c) {
-    addr ptr_lo = cpu_read(c->PC);
+    addr ptr_lo = cpu_read(c, c->PC);
     c->PC++;
 
-    addr ptr_hi = cpu_read(c->PC);
+    addr ptr_hi = cpu_read(c, c->PC);
     c->PC++;
     
     addr ptr = (ptr_hi << 8) | ptr_lo;
 
     // Handle page boundary bug
     if ((ptr & 0x00FF) == 0x00FF) {
-        c->address_bus = (cpu_read(ptr & 0xFF00) << 8) | cpu_read(ptr);
+        c->address_bus = (cpu_read(c, ptr & 0xFF00) << 8) | cpu_read(c, ptr);
     } else {
-        c->address_bus = (cpu_read(ptr + 1) << 8) | cpu_read(ptr);
+        c->address_bus = (cpu_read(c, ptr + 1) << 8) | cpu_read(c, ptr);
     }
 
     return 0;
 }
 
 byte IZY(cpu *c) { 
-    addr tmp = cpu_read(c->PC);
+    addr tmp = cpu_read(c, c->PC);
     c->PC++;
 
-    addr lo = cpu_read(tmp & 0xFF);
-    addr hi = cpu_read((tmp + 1) & 0xFF);
+    addr lo = cpu_read(c, tmp & 0xFF);
+    addr hi = cpu_read(c, (tmp + 1) & 0xFF);
 
     c->address_bus = (hi << 8) | lo;
     c->address_bus += c->Y;
@@ -266,11 +268,11 @@ byte IZY(cpu *c) {
 }
 
 byte IZX(cpu *c) { 
-    addr tmp = cpu_read(c->PC);
+    addr tmp = cpu_read(c, c->PC);
     c->PC++;
 
-    addr lo = cpu_read((addr)(tmp + (addr)c->X) & 0xFF);
-    addr hi = cpu_read((addr)(tmp + (addr)c->X + 1) & 0xFF);
+    addr lo = cpu_read(c, (addr)(tmp + (addr)c->X) & 0xFF);
+    addr hi = cpu_read(c, (addr)(tmp + (addr)c->X + 1) & 0xFF);
 
     c->address_bus = (hi << 8) | lo;
 
@@ -278,7 +280,7 @@ byte IZX(cpu *c) {
 }
 
 byte REL(cpu *c) { 
-    c->address_relative = cpu_read(c->PC);
+    c->address_relative = cpu_read(c, c->PC);
     c->PC++;
     if (c->address_relative & 0x80) 
         c->address_relative |= 0xFF00;
@@ -337,7 +339,7 @@ byte ASL(cpu *c) {
 	if (c->code[c->IR].addressing_mode == &IMP)
 		c->A = temp & 0x00FF;
 	else
-		cpu_write(c->address_bus, temp & 0x00FF);
+		cpu_write(c, c->address_bus, temp & 0x00FF);
     return 0;
 }
 
@@ -438,17 +440,17 @@ byte BRK(cpu *c) {
     c->PC++;
 	
 	cpu_set_flag(c, c->I, 1);
-	cpu_write(0x0100 + c->P, (c->PC >> 8) & 0x00FF);
-	c->P--;
-	cpu_write(0x0100 + c->P, c->PC & 0x00FF);
-	c->P--;
+	cpu_write(c, STACK_BASE + c->SP, (c->PC >> 8) & 0x00FF);
+	c->SP--;
+	cpu_write(c, STACK_BASE + c->SP, c->PC & 0x00FF);
+	c->SP--;
 
 	cpu_set_flag(c, c->B, 1);
-	cpu_write(0x0100 + c->P, c->S);
-	c->P--;
+	cpu_write(c, STACK_BASE + c->SP, c->P);
+	c->SP--;
 	cpu_set_flag(c, c->B, 0);
 
-	c->PC = (addr)cpu_read(0xFFFE) | ((addr)cpu_read(0xFFFF) << 8);
+	c->PC = (addr)cpu_read(c, IRQ) | ((addr)cpu_read(c, IRQ + 1) << 8);
 	return 0;
 }
 
@@ -530,7 +532,7 @@ byte CPY(cpu *c) {
 byte DEC(cpu *c) {
     cpu_decode(c);
 	byte temp = c->data_bus - 1;
-	cpu_write(c->address_bus, temp & 0x00FF);
+	cpu_write(c, c->address_bus, temp & 0x00FF);
 	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
 	cpu_set_flag(c, c->N, temp & 0x0080);
 	return 0;
@@ -561,7 +563,7 @@ byte EOR(cpu *c) {
 byte INC(cpu *c) {
     cpu_decode(c);
 	byte temp = c->data_bus + 1;
-	cpu_write(c->address_bus, temp & 0x00FF);
+	cpu_write(c, c->address_bus, temp & 0x00FF);
 	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
 	cpu_set_flag(c, c->N, temp & 0x0080);
 	return 0;
@@ -589,10 +591,10 @@ byte JMP(cpu *c) {
 byte JSR(cpu *c) {
     c->PC--;
 
-	cpu_write(0x0100 + c->P, (c->PC >> 8) & 0x00FF);
-	c->P--;
-	cpu_write(0x0100 + c->P, c->PC & 0x00FF);
-	c->P--;
+	cpu_write(c, STACK_BASE + c->SP, (c->PC >> 8) & 0x00FF);
+	c->SP--;
+	cpu_write(c, STACK_BASE + c->SP, c->PC & 0x00FF);
+	c->SP--;
 
 	c->PC = c->address_bus;
 	return 0;
@@ -631,7 +633,7 @@ byte LSR(cpu *c) {
 	if (c->code[c->IR].addressing_mode == &IMP)
 		c->A = temp & 0x00FF;
 	else
-		cpu_write(c->address_bus, temp & 0x00FF);
+		cpu_write(c, c->address_bus, temp & 0x00FF);
 	return 0;
 }
 
@@ -658,30 +660,30 @@ byte ORA(cpu *c) {
 }
 
 byte PHA(cpu *c) {
-    cpu_write(0x0100 + c->P, c->A);
-	c->P--;
+    cpu_write(c, STACK_BASE + c->SP, c->A);
+	c->SP--;
 	return 0;
 }
 
 byte PHP(cpu *c) {
-    cpu_write(0x0100 + c->P, c->S | c->B | c->U);
+    cpu_write(c, STACK_BASE + c->SP, c->P | c->B | c->U);
 	cpu_set_flag(c, c->B, 0);
 	cpu_set_flag(c, c->U, 0);
-	c->P--;
+	c->SP--;
 	return 0;
 }
 
 byte PLA(cpu *c) {
-    c->P++;
-	c->A = cpu_read(0x0100 + c->P);
+    c->SP++;
+	c->A = cpu_read(c, STACK_BASE + c->SP);
 	cpu_set_flag(c, c->Z, c->A == 0x00);
 	cpu_set_flag(c, c->N, c->A & 0x80);
 	return 0;
 }
 
 byte PLP(cpu *c) {
-    c->P++;
-	c->S = cpu_read(0x0100 + c->P);
+    c->SP++;
+	c->P = cpu_read(c, STACK_BASE + c->SP);
 	cpu_set_flag(c, c->U, 1);
 	return 0;
 }
@@ -695,7 +697,7 @@ byte ROL(cpu *c) {
 	if (c->code[c->IR].addressing_mode == &IMP)
 		c->A = temp & 0x00FF;
 	else
-		cpu_write(c->address_bus, temp & 0x00FF);
+		cpu_write(c, c->address_bus, temp & 0x00FF);
 	return 0;
 }
 
@@ -708,28 +710,28 @@ byte ROR(cpu *c) {
 	if (c->code[c->IR].addressing_mode == &IMP)
 		c->A = temp & 0x00FF;
 	else
-		cpu_write(c->address_bus, temp & 0x00FF);
+		cpu_write(c, c->address_bus, temp & 0x00FF);
 	return 0;
 }
 
 byte RTI(cpu *c) {
-    c->P++;
-	c->S = cpu_read(0x0100 + c->P);
-	c->S &= ~c->B;
-	c->S &= ~c->U;
+    c->SP++;
+	c->P = cpu_read(c, STACK_BASE + c->SP);
+	c->P &= ~c->B;
+	c->P &= ~c->U;
 
+	c->SP++;
+	c->PC = (addr)cpu_read(c, STACK_BASE + c->SP);
 	c->P++;
-	c->PC = (addr)cpu_read(0x0100 + c->P);
-	c->P++;
-	c->PC |= (addr)cpu_read(0x0100 + c->P) << 8;
+	c->PC |= (addr)cpu_read(c, STACK_BASE + c->SP) << 8;
 	return 0;
 }
 
 byte RTS(cpu *c) {
-    c->P++;
-	c->PC = (addr)cpu_read(0x0100 + c->P);
-	c->P++;
-	c->PC |= (addr)cpu_read(0x0100 + c->P) << 8;
+    c->SP++;
+	c->PC = (addr)cpu_read(c, STACK_BASE + c->SP);
+	c->SP++;
+	c->PC |= (addr)cpu_read(c, STACK_BASE + c->SP) << 8;
 	
 	c->PC++;
 	return 0;
@@ -769,17 +771,17 @@ byte SEI(cpu *c) {
 }
 
 byte STA(cpu *c) {
-    cpu_write(c->address_bus, c->A);
+    cpu_write(c, c->address_bus, c->A);
     return 0;
 }
 
 byte STX(cpu *c) {
-    cpu_write(c->address_bus, c->X);
+    cpu_write(c, c->address_bus, c->X);
     return 0;
 }
 
 byte STY(cpu *c) {
-    cpu_write(c->address_bus, c->Y);
+    cpu_write(c, c->address_bus, c->Y);
     return 0;
 }
 
@@ -798,6 +800,7 @@ byte TAY(cpu *c) {
 }
 
 byte TSX(cpu *c) {
+    c->SP = c->A & c->X;
     c->X = c->P;
 	cpu_set_flag(c, c->Z, c->X == 0x00);
 	cpu_set_flag(c, c->N, c->X & 0x80);
@@ -812,7 +815,7 @@ byte TXA(cpu *c) {
 }
 
 byte TXS(cpu *c) {
-    c->P = c->X;
+    c->SP = c->X;
     return 0;
 }
 
@@ -823,117 +826,278 @@ byte TYA(cpu *c) {
 	return 0;
 }
 
-// ILLEGAL OPCODES USE AT YOUR OWN RISK
+/** ILLEGAL OPCODES USE AT YOUR OWN RISK
+
+ ***!!!BEWARE, FORGOTTEN POWERS LURK BEYOND!!!***
+
+ */
+// Illegal Opcodes
+
 byte ALR(cpu *c) {
-    UNUSED(c);
-    return 0;
+    // AND with memory value, then LSR
+    c->A &= cpu_read(c, c->address_bus);
+    byte carry = c->A & 0x01;
+    c->A >>= 1;
+
+    // Set flags
+    cpu_set_flag(c, c->C, carry);
+    cpu_set_flag(c, c->Z, c->A == 0);
+    cpu_set_flag(c, c->N, c->A & 0x80);
+
+    return 0; // No extra cycle needed
 }
 
 byte ANC(cpu *c) {
-    UNUSED(c);
-    return 0;
+    // AND with memory value
+    c->A &= cpu_read(c, c->address_bus);
+
+    // Set Carry and other flags
+    cpu_set_flag(c, c->C, c->A & 0x80);
+    cpu_set_flag(c, c->Z, c->A == 0);
+    cpu_set_flag(c, c->N, c->A & 0x80);
+
+    return 0; // No extra cycle needed
 }
 
 byte ANE(cpu *c) {
-    UNUSED(c);
-    return 0;
+    const byte CONST = 0xFF;
+    c->A |= CONST;
+    c->A &= c->X;
+    c->A &= cpu_read(c, c->address_bus);
+
+    // Set flags
+    cpu_set_flag(c, c->Z, c->A == 0);
+    cpu_set_flag(c, c->N, c->A & 0x80);
+
+    return 0; // No extra cycle needed
 }
 
 byte ARR(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->A &= cpu_read(c, c->address_bus);
+    byte carry = c->A & 0x01;
+    c->A >>= 1;
+
+    // Set Carry, Zero, and Negative flags
+    cpu_set_flag(c, c->C, carry);
+    cpu_set_flag(c, c->Z, c->A == 0);
+    cpu_set_flag(c, c->N, c->A & 0x80);
+
+    // Set Overflow flag
+    cpu_set_flag(c, c->V, ((c->A >> 6) ^ (c->A >> 5)) & 1);
+
+    return 0; // No extra cycle needed
 }
 
 byte DCP(cpu *c) {
-    UNUSED(c);
-    return 0;
+    byte value = cpu_read(c, c->address_bus) - 1;
+    cpu_write(c, c->address_bus, value);
+
+    // Perform CMP A with memory
+    byte temp = c->A - value;
+
+    // Set flags
+    cpu_set_flag(c, c->C, c->A >= value);
+    cpu_set_flag(c, c->Z, temp == 0);
+    cpu_set_flag(c, c->N, temp & 0x80);
+
+    return 0; // No extra cycle needed
 }
 
 byte ISC(cpu *c) {
-    UNUSED(c);
-    return 0;
+    byte value = cpu_read(c, c->address_bus) + 1;
+    cpu_write(c, c->address_bus, value);
+
+    // Perform SBC A with memory
+    addr result = (addr)c->A - value - (cpu_get_flag(c, c->C) ? 0 : 1);
+
+    // Set flags
+    cpu_set_flag(c, c->C, result <= 0xFF);
+    cpu_set_flag(c, c->Z, (result & 0xFF) == 0);
+    cpu_set_flag(c, c->N, result & 0x80);
+    cpu_set_flag(c, c->V, ((c->A ^ result) & (value ^ result) & 0x80));
+
+    c->A = result & 0xFF;
+    return 0; // No extra cycle needed
 }
 
 byte LAS(cpu *c) {
-    UNUSED(c);
-    return 0;
+    byte value = cpu_read(c, c->address_bus) & c->SP;
+    c->A = value;
+    c->X = value;
+    c->SP = value;
+
+    // Set flags
+    cpu_set_flag(c, c->Z, c->A == 0);
+    cpu_set_flag(c, c->N, c->A & 0x80);
+
+    return 1; // No extra cycle needed
 }
 
 byte LAX(cpu *c) {
-    UNUSED(c);
-    return 0;
+    c->A = cpu_read(c, c->address_bus);
+    c->X = c->A;
+
+    // Set flags
+    cpu_set_flag(c, c->Z, c->A == 0);
+    cpu_set_flag(c, c->N, c->A & 0x80);
+
+    return 1; // No extra cycle needed
 }
 
 byte LXA(cpu *c) {
-    UNUSED(c);
-    return 0;
+    const byte CONST = 0xFF;
+    c->A |= CONST;
+    c->A &= cpu_read(c, c->address_bus);
+    c->X = c->A;
+
+    // Set flags
+    cpu_set_flag(c, c->Z, c->A == 0);
+    cpu_set_flag(c, c->N, c->A & 0x80);
+
+    return 0; // No extra cycle needed
 }
 
 byte RLA(cpu *c) {
-    UNUSED(c);
-    return 0;
+    byte carry = cpu_get_flag(c, c->C);
+    byte value = cpu_read(c, c->address_bus);
+    byte new_carry = value & 0x80;
+
+    value = (value << 1) | carry;
+    cpu_write(c, c->address_bus, value);
+
+    c->A &= value;
+
+    // Set flags
+    cpu_set_flag(c, c->C, new_carry);
+    cpu_set_flag(c, c->Z, c->A == 0);
+    cpu_set_flag(c, c->N, c->A & 0x80);
+
+    return 0; // No extra cycle needed
 }
 
 byte RRA(cpu *c) {
-    UNUSED(c);
-    return 0;
+    byte carry = cpu_get_flag(c, c->C);
+    byte value = cpu_read(c, c->address_bus);
+
+    value = (value >> 1) | (carry << 7);
+    cpu_write(c, c->address_bus, value);
+
+    // Perform ADC A with value
+    addr result = c->A + value + cpu_get_flag(c, c->C);
+
+    // Set flags
+    cpu_set_flag(c, c->C, result > 0xFF);
+    cpu_set_flag(c, c->Z, (result & 0xFF) == 0);
+    cpu_set_flag(c, c->N, result & 0x80);
+    cpu_set_flag(c, c->V, (~(c->A ^ value) & (c->A ^ result) & 0x80));
+
+    c->A = result & 0xFF;
+    return 0; // No extra cycle needed
 }
 
 byte SAX(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_write(c, c->address_bus, c->A & c->X);
+    return 0; // No extra cycle needed
 }
 
 byte SBX(cpu *c) {
-    UNUSED(c);
-    return 0;
+    byte value = cpu_read(c, c->address_bus);
+    byte temp = (c->A & c->X) - value;
+
+    // Set flags
+    cpu_set_flag(c, c->C, (c->A & c->X) >= value);
+    cpu_set_flag(c, c->Z, temp == 0);
+    cpu_set_flag(c, c->N, temp & 0x80);
+
+    c->X = temp;
+    return 0; // No extra cycle needed
 }
 
 byte SHA(cpu *c) {
-    UNUSED(c);
-    return 0;
+    byte value = c->A & c->X & ((c->address_bus >> 8) + 1);
+    cpu_write(c, c->address_bus, value);
+    return 0; // No extra cycle needed
 }
 
 byte SHX(cpu *c) {
-    UNUSED(c);
-    return 0;
+    byte value = c->X & ((c->address_bus >> 8) + 1);
+    cpu_write(c, c->address_bus, value);
+    return 0; // No extra cycle needed
 }
 
 byte SHY(cpu *c) {
-    UNUSED(c);
-    return 0;
+    byte value = c->Y & ((c->address_bus >> 8) + 1);
+    cpu_write(c, c->address_bus, value);
+    return 0; // No extra cycle needed
 }
 
 byte SLO(cpu *c) {
-    UNUSED(c);
-    return 0;
+    byte value = cpu_read(c, c->address_bus);
+    byte carry = value & 0x80;
+
+    value <<= 1;
+    cpu_write(c, c->address_bus, value);
+
+    c->A |= value;
+
+    // Set flags
+    cpu_set_flag(c, c->C, carry);
+    cpu_set_flag(c, c->Z, c->A == 0);
+    cpu_set_flag(c, c->N, c->A & 0x80);
+
+    return 0; // No extra cycle needed
 }
 
 byte SRE(cpu *c) {
-    UNUSED(c);
-    return 0;
+    byte value = cpu_read(c, c->address_bus);
+    byte carry = value & 0x01;
+
+    value >>= 1;
+    cpu_write(c, c->address_bus, value);
+
+    c->A ^= value;
+
+    // Set flags
+    cpu_set_flag(c, c->C, carry);
+    cpu_set_flag(c, c->Z, c->A == 0);
+    cpu_set_flag(c, c->N, c->A & 0x80);
+
+    return 0; // No extra cycle needed
 }
 
 byte TAS(cpu *c) {
-    UNUSED(c);
-    return 0;
+    cpu_write(c, c->address_bus, c->SP & ((c->address_bus >> 8) + 1));
+    return 0; // No extra cycle needed
 }
 
 byte USBC(cpu *c) {
-    UNUSED(c);
-    return 0;
+    return SBC(c); // Same as SBC
 }
 
 byte NOP_undoc(cpu *c) {
-    UNUSED(c);
-    return 0;
+    // Return 1 for specific undocumented NOPs that require extra cycles
+    switch (c->IR) {
+    case 0x1C:
+    case 0x3C:
+    case 0x5C:
+    case 0x7C:
+    case 0xDC:
+    case 0xFC:
+        return 1;
+    }
+    return 0; // No extra cycle needed
 }
 
-byte JAM (cpu *c) {
-    UNUSED(c);
-    return 0;
-}
+byte JAM(cpu *c) {
+    // Trap the CPU in an infinite loop to simulate the CPU halt
+    printf("CPU has been JAMMED (halted)\n");
 
+    c->data_bus = 0xFF;
+    while (CPU_JAM)
+        ;
+
+    return 0;  // This is unreachable, as the CPU is "stuck"
+}
 
 void cpu_code(cpu *c) {
     // System Instructions
@@ -1206,13 +1370,15 @@ void cpu_code(cpu *c) {
     // TYA (Transfer Y to Accumulator)
     c->code[0x98] = (struct code_t){"TYA", &IMP, &TYA, 2};
 
-    // ILLEGAL OPCODES
+    //////////////////////////////////////////////////////
+    // ILLEGAL OPCODES                                  //
+    //////////////////////////////////////////////////////
 
     // ALR - AND byte with accumulator, then LSR A
     c->code[0x4B] = (struct code_t){"ALR", &IMM, &ALR, 2};
 
     // ANC - AND byte with accumulator, then copy bit 7 of A into C
-    c->code[0x0B] = (struct code_t){"ANC", &IMM, &ANC, 2}; // Also ANC can have another opcode 0x2B, depending on the variant
+    c->code[0x0B] = (struct code_t){"ANC", &IMM, &ANC, 2};
     c->code[0x2B] = (struct code_t){"ANC", &IMM, &ANC, 2};
 
     // ANE - AND X register with accumulator and an immediate value, then store the result in A (unstable)
@@ -1315,7 +1481,7 @@ void cpu_code(cpu *c) {
     c->code[0xEB] = (struct code_t){"SBC", &IMM, &USBC, 2}; // Example using IMM addressing, actual behavior may vary
 
     // NOP_undoc - Undocumented No Operation variants with different cycles or addressing modes
-// NOPs (No Operation) - Implied
+    // NOPs (No Operation) - Implied
     c->code[0x1A] = (struct code_t){"NOP", &IMP, &NOP_undoc, 2};
     c->code[0x3A] = (struct code_t){"NOP", &IMP, &NOP_undoc, 2};
     c->code[0x5A] = (struct code_t){"NOP", &IMP, &NOP_undoc, 2};
