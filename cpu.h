@@ -10,6 +10,16 @@
 #define RESET 0xFFFC // 0xFFFD
 #define IRQ 0xFFFE // 0xFFFF
 
+// processor status flags
+#define FLAG_C 0x01  // Carry flag
+#define FLAG_Z 0x02  // Zero flag
+#define FLAG_I 0x04  // Interrupt disable
+#define FLAG_D 0x08  // Decimal mode
+#define FLAG_B 0x10  // Break command
+#define FLAG_U 0x20  // Unused
+#define FLAG_V 0x40  // Overflow flag
+#define FLAG_N 0x80  // Negative flag
+
 typedef struct Board Board;
 
 // 8-BIT CPU
@@ -24,19 +34,7 @@ typedef struct cpu {
                    // I know that all 1 byte register are written with one letter
                    // but technically this refers to $0100 + the stack pointer!
                    // so it's 2 bytes
-    union {
-        byte P;    // processor status register
-        struct {               
-            byte C : 1; // carry
-            byte Z : 1; // zero
-            byte I : 1; // interrup
-            byte D : 1; // decimal
-            byte B : 1; // break
-            byte U : 1; // unused
-            byte V : 1; // overflow
-            byte N : 1; // negative
-        };
-    };
+    byte P;
     word PC; // program counter
 
     byte cycles; // internal cycles
@@ -151,7 +149,7 @@ byte TXA(cpu *c);
 byte TXS(cpu *c);
 byte TYA(cpu *c);
 
-// ILLEGAL OPCODES USE AT YOUR OWN RISK
+// ILLEGAL OPCODES
 byte ALR(cpu *c);
 byte ANC(cpu *c);
 byte ANE(cpu *c);

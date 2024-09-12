@@ -1,8 +1,8 @@
-# COWIP
+# Q6502
 
 ---
 
-![text](cowip.webp)
+![q6502](q6502.webp)
 
 ---
 
@@ -10,9 +10,18 @@
 
 A 6502 cpu emulator. This has all addressing mode, legal & illegal opcodes implemented.
 
-So far, this has only 2x32KB memory arrays to represent RAM and ROM. this serves as a boilerplate for building 6502-based computers and consoles (C64, Apple II, NES...) or even you own custom machine.
+comprises of:
+ - Motherboard *this manages memory read and write functions, brings up all the modules together and runs eveyrthing*
+ - Clock *Crystal oscillator emulator to emulate the 1,79MHz frquency of the 6502*
+ - CPU *6502 emulator*
+ - Memory *So far the board has access to 2x32KB arrays to represent RAM and ROM*
+ - Debug Tools *Prints the internal CPU state and throws exceptions*
+
+This serves as a boilerplate for building 6502-based computers and consoles (C64, Apple II, NES...) or even your own custom machine.
 
 **THIS MIGHT BE BUGGY** So far, all issue I have encountered were from programs I was making not the CPU itself.
+
+Do not hesitate to share any improvments you make to this code or anything you build with it.
 
 ---
 
@@ -33,38 +42,15 @@ So far, this has only 2x32KB memory arrays to represent RAM and ROM. this serves
 
 ## HOW TO USE
 
-```c
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
-
-#include "./board.h"
-
-int main(void) {
-    Board *b = board_init("./rom.bin");
-    if (b == NULL) {
-        printf("failed to init board\n");
-        return 5;
-    }
-
-    bool power = true;
-    while (power) {
-        __run(b);
-        debug_print_CPU(b->c);
-        system("clear");
-    }
-
-    board_shutdown(b);
-    
-    return 0;
-}
-
-```
-
 ```sh
+git clone https://github.com/itsjustgalileo/q6502.git
+
+cd q6502
+
 make
-./emulator <ROM FILE PATH>
-# if no rom is provided a default ROM full of NOP is loaded
+
+# if no rom is provided a system loads a default ROM with a reset routine and a loop.
+./emulator <ROM_FILE_PATH>
 ```
 
 ---

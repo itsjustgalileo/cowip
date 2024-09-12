@@ -73,9 +73,9 @@ void cpu_nmi(cpu *c) {
 	cpu_write(c, STACK_BASE + c->SP, c->PC & 0x00FF);
 	c->SP--;
 
-	cpu_set_flag(c, c->B, 0);
-	cpu_set_flag(c, c->U, 1);
-	cpu_set_flag(c, c->I, 1);
+	cpu_set_flag(c, FLAG_B, 0);
+	cpu_set_flag(c, FLAG_U, 1);
+	cpu_set_flag(c, FLAG_I, 1);
 	cpu_write(c, STACK_BASE + c->SP, c->P);
 	c->SP--;
 
@@ -104,7 +104,7 @@ void cpu_reset(cpu* c) {
 }
 
 void cpu_irq(cpu *c) {
-    if (cpu_get_flag(c, c->I) == 0)
+    if (cpu_get_flag(c, FLAG_I) == 0)
 	{
 		// Push the program counter to the stack. It's 16-bits dont
 		// forget so that takes two pushes
@@ -114,9 +114,9 @@ void cpu_irq(cpu *c) {
 		c->SP--;
 
 		// Then Push the status register to the stack
-		cpu_set_flag(c, c->B, 0);
-		cpu_set_flag(c, c->U, 1);
-		cpu_set_flag(c, c->I, 1);
+		cpu_set_flag(c, FLAG_B, 0);
+		cpu_set_flag(c, FLAG_U, 1);
+		cpu_set_flag(c, FLAG_I, 1);
 		cpu_write(c, STACK_BASE + c->SP, c->P);
 		c->SP--;
 
@@ -134,13 +134,13 @@ void cpu_irq(cpu *c) {
 void cpu_clock(cpu *c) {
     if (c->cycles == 0) {
         c->IR = cpu_read(c, c->PC);
-        cpu_set_flag(c, c->U, true);
+        cpu_set_flag(c, FLAG_U, true);
         c->PC++;
         c->cycles = c->code[c->IR].cycles;
         byte cycle1 = (c->code[c->IR].addressing_mode)(c);
         byte cycle2 = (c->code[c->IR].opcode)(c);
         c->cycles += (cycle1 & cycle2);
-        cpu_set_flag(c, c->U, true);
+        cpu_set_flag(c, FLAG_U, true);
     }
     c->cycles--;
 }
@@ -294,19 +294,19 @@ byte ADC(cpu *c) {
 	
 	// Add is performed in 16-bit domain for emulation to capture any
 	// carry bit, which will exist in bit 8 of the 16-bit word
-	byte temp = (addr)c->A + (addr)c->data_bus + (addr)cpu_get_flag(c, c->C);
+	byte temp = (addr)c->A + (addr)c->data_bus + (addr)cpu_get_flag(c, FLAG_C);
 	
 	// The carry flag out exists in the high byte bit 0
-	cpu_set_flag(c, c->C, temp > 255);
+	cpu_set_flag(c, FLAG_C, temp > 255);
 	
 	// The Zero flag is set if the result is 0
-	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0);
+	cpu_set_flag(c, FLAG_Z, (temp & 0x00FF) == 0);
 	
 	// The signed Overflow flag is set based on all that up there! :D
-	cpu_set_flag(c, c->V, (~((addr)c->A ^ (addr)c->data_bus) & ((addr)c->A ^ (addr)temp)) & 0x0080);
+	cpu_set_flag(c, FLAG_V, (~((addr)c->A ^ (addr)c->data_bus) & ((addr)c->A ^ (addr)temp)) & 0x0080);
 	
 	// The negative flag is set to the most significant bit of the result
-	cpu_set_flag(c, c->N, temp & 0x80);
+	cpu_set_flag(c, FLAG_N, temp & 0x80);
 	
 	// Load the result into the accumulator (it's 8-bit dont forget!)
 	c->A = temp & 0x00FF;
@@ -319,13 +319,8 @@ byte AND(cpu *c) {
     byte data = cpu_decode(c);
     c->A &= data;
 
-    if(c->A == 0x00) {
-        c->Z = 1;
-    }
-
-    if (c->A & 0x80) {
-        c->N = 1;
-    }
+    cpu_set_flag(c, FLAG_Z, c->A == 0x00);
+    cpu_set_flag(c, FLAG_N, c->A & 0x80);
     
     return 1;
 }
@@ -333,9 +328,9 @@ byte AND(cpu *c) {
 byte ASL(cpu *c) {
     cpu_decode(c);
 	byte temp = (addr)c->data_bus << 1;
-	cpu_set_flag(c, c->C, (temp & 0xFF00) > 0);
-	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x00);
-	cpu_set_flag(c, c->N, temp & 0x80);
+	cpu_set_flag(c, FLAG_C, (temp & 0xFF00) > 0);
+	cpu_set_flag(c, FLAG_Z, (temp & 0x00FF) == 0x00);
+	cpu_set_flag(c, FLAG_N, temp & 0x80);
 	if (c->code[c->IR].addressing_mode == &IMP)
 		c->A = temp & 0x00FF;
 	else
@@ -344,7 +339,7 @@ byte ASL(cpu *c) {
 }
 
 byte BCC(cpu *c) {
-    if (cpu_get_flag(c, c->C) == 0)
+    if (cpu_get_flag(c, FLAG_C) == 0)
 	{
 		c->cycles++;
 		c->address_bus = c->PC + c->address_relative;
@@ -358,7 +353,7 @@ byte BCC(cpu *c) {
 }
 
 byte BCS(cpu *c) {
-    if (cpu_get_flag(c, c->C) == 1)
+    if (cpu_get_flag(c, FLAG_C) == 1)
 	{
 		c->cycles++;
 		c->address_bus = c->PC + c->address_relative;
@@ -372,7 +367,7 @@ byte BCS(cpu *c) {
 }
 
 byte BEQ(cpu *c) {
-    if (cpu_get_flag(c, c->Z) == 1)
+    if (cpu_get_flag(c, FLAG_Z) == 1)
 	{
 		c->cycles++;
 		c->address_bus = c->PC + c->address_relative;
@@ -388,14 +383,14 @@ byte BEQ(cpu *c) {
 byte BIT(cpu *c) {
     cpu_decode(c);
 	byte temp = c->A & c->data_bus;
-	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x00);
-	cpu_set_flag(c, c->N, c->data_bus & (1 << 7));
-	cpu_set_flag(c, c->V, c->data_bus & (1 << 6));
+	cpu_set_flag(c, FLAG_Z, (temp & 0x00FF) == 0x00);
+	cpu_set_flag(c, FLAG_N, c->data_bus & (1 << 7));
+	cpu_set_flag(c, FLAG_V, c->data_bus & (1 << 6));
 	return 0;
 }
 
 byte BMI(cpu *c) {
-    if (cpu_get_flag(c, c->N) == 1)
+    if (cpu_get_flag(c, FLAG_N) == 1)
 	{
 		c->cycles++;
 		c->address_bus = c->PC + c->address_relative;
@@ -409,7 +404,7 @@ byte BMI(cpu *c) {
 }
 
 byte BNE(cpu *c) {
-    if (cpu_get_flag(c, c->Z) == 0)
+    if (cpu_get_flag(c, FLAG_Z) == 0)
 	{
 		c->cycles++;
 		c->address_bus = c->PC + c->address_relative;
@@ -423,7 +418,7 @@ byte BNE(cpu *c) {
 }
 
 byte BPL(cpu *c) {
-    if (cpu_get_flag(c, c->N) == 0)
+    if (cpu_get_flag(c, FLAG_N) == 0)
 	{
 		c->cycles++;
 		c->address_bus = c->PC + c->address_relative;
@@ -439,23 +434,23 @@ byte BPL(cpu *c) {
 byte BRK(cpu *c) {
     c->PC++;
 	
-	cpu_set_flag(c, c->I, 1);
+	cpu_set_flag(c, FLAG_I, 1);
 	cpu_write(c, STACK_BASE + c->SP, (c->PC >> 8) & 0x00FF);
 	c->SP--;
 	cpu_write(c, STACK_BASE + c->SP, c->PC & 0x00FF);
 	c->SP--;
 
-	cpu_set_flag(c, c->B, 1);
+	cpu_set_flag(c, FLAG_B, 1);
 	cpu_write(c, STACK_BASE + c->SP, c->P);
 	c->SP--;
-	cpu_set_flag(c, c->B, 0);
+	cpu_set_flag(c, FLAG_B, 0);
 
 	c->PC = (addr)cpu_read(c, IRQ) | ((addr)cpu_read(c, IRQ + 1) << 8);
 	return 0;
 }
 
 byte BVC(cpu *c) {
-    if (cpu_get_flag(c, c->V) == 0)
+    if (cpu_get_flag(c, FLAG_V) == 0)
 	{
 		c->cycles++;
 		c->address_bus = c->PC + c->address_relative;
@@ -469,7 +464,7 @@ byte BVC(cpu *c) {
 }
 
 byte BVS(cpu *c) {
-    if (cpu_get_flag(c, c->V) == 1)
+    if (cpu_get_flag(c, FLAG_V) == 1)
 	{
 		c->cycles++;
 		c->address_bus = c->PC + c->address_relative;
@@ -483,49 +478,49 @@ byte BVS(cpu *c) {
 }
 
 byte CLC(cpu *c) {
-    cpu_set_flag(c, c->C, false);
+    cpu_set_flag(c, FLAG_C, false);
     return 0;
 }
 
 byte CLD(cpu *c) {
-    cpu_set_flag(c, c->D, false);
+    cpu_set_flag(c, FLAG_D, false);
     return 0;
 }
 
 byte CLI(cpu *c) {
-    cpu_set_flag(c, c->I, false);
+    cpu_set_flag(c, FLAG_I, false);
     return 0;
 }
 
 byte CLV(cpu *c) {
-    cpu_set_flag(c, c->V, false);
+    cpu_set_flag(c, FLAG_V, false);
     return 0;
 }
 
 byte CMP(cpu *c) {
 	cpu_decode(c);
 	byte temp = (addr)c->A - (addr)c->data_bus;
-	cpu_set_flag(c, c->C, c->A >= c->data_bus);
-	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
-	cpu_set_flag(c, c->N, temp & 0x0080);
+	cpu_set_flag(c, FLAG_C, c->A >= c->data_bus);
+	cpu_set_flag(c, FLAG_Z, (temp & 0x00FF) == 0x0000);
+	cpu_set_flag(c, FLAG_N, temp & 0x0080);
 	return 1;
 }
 
 byte CPX(cpu *c) {
     cpu_decode(c);
 	byte temp = (addr)c->X - (addr)c->data_bus;
-	cpu_set_flag(c, c->C, c->X >= c->data_bus);
-	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
-	cpu_set_flag(c, c->N, temp & 0x0080);
+	cpu_set_flag(c, FLAG_C, c->X >= c->data_bus);
+	cpu_set_flag(c, FLAG_Z, (temp & 0x00FF) == 0x0000);
+	cpu_set_flag(c, FLAG_N, temp & 0x0080);
 	return 0;
 }
 
 byte CPY(cpu *c) {
     cpu_decode(c);
 	byte temp = (addr)c->Y - (addr)c->data_bus;
-	cpu_set_flag(c, c->C, c->Y >= c->data_bus);
-	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
-	cpu_set_flag(c, c->N, temp & 0x0080);
+	cpu_set_flag(c, FLAG_C, c->Y >= c->data_bus);
+	cpu_set_flag(c, FLAG_Z, (temp & 0x00FF) == 0x0000);
+	cpu_set_flag(c, FLAG_N, temp & 0x0080);
 	return 0;
 }
 
@@ -533,30 +528,30 @@ byte DEC(cpu *c) {
     cpu_decode(c);
 	byte temp = c->data_bus - 1;
 	cpu_write(c, c->address_bus, temp & 0x00FF);
-	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
-	cpu_set_flag(c, c->N, temp & 0x0080);
+	cpu_set_flag(c, FLAG_Z, (temp & 0x00FF) == 0x0000);
+	cpu_set_flag(c, FLAG_N, temp & 0x0080);
 	return 0;
 }
 
 byte DEX(cpu *c) {
     c->X--;
-	cpu_set_flag(c, c->Z, c->X == 0x00);
-	cpu_set_flag(c, c->N, c->X & 0x80);
+	cpu_set_flag(c, FLAG_Z, c->X == 0x00);
+	cpu_set_flag(c, FLAG_N, c->X & 0x80);
 	return 0;
 }
 
 byte DEY(cpu *c) {
     c->Y--;
-	cpu_set_flag(c, c->Z, c->Y == 0x00);
-	cpu_set_flag(c, c->N, c->Y & 0x80);
+	cpu_set_flag(c, FLAG_Z, c->Y == 0x00);
+	cpu_set_flag(c, FLAG_N, c->Y & 0x80);
 	return 0;
 }
 
 byte EOR(cpu *c) {
     cpu_decode(c);
 	c->A = c->A ^ c->data_bus;	
-	cpu_set_flag(c, c->Z, c->A == 0x00);
-	cpu_set_flag(c, c->N, c->A & 0x80);
+	cpu_set_flag(c, FLAG_Z, c->A == 0x00);
+	cpu_set_flag(c, FLAG_N, c->A & 0x80);
 	return 1;
 }
 
@@ -564,22 +559,22 @@ byte INC(cpu *c) {
     cpu_decode(c);
 	byte temp = c->data_bus + 1;
 	cpu_write(c, c->address_bus, temp & 0x00FF);
-	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
-	cpu_set_flag(c, c->N, temp & 0x0080);
+	cpu_set_flag(c, FLAG_Z, (temp & 0x00FF) == 0x0000);
+	cpu_set_flag(c, FLAG_N, temp & 0x0080);
 	return 0;
 }
 
 byte INX(cpu *c) {
     c->X++;
-	cpu_set_flag(c, c->Z, c->X == 0x00);
-	cpu_set_flag(c, c->N, c->X & 0x80);
+	cpu_set_flag(c, FLAG_Z, c->X == 0x00);
+	cpu_set_flag(c, FLAG_N, c->X & 0x80);
 	return 0;
 }
 
 byte INY(cpu *c) {
     c->Y++;
-	cpu_set_flag(c, c->Z, c->X == 0x00);
-	cpu_set_flag(c, c->N, c->X & 0x80);
+	cpu_set_flag(c, FLAG_Z, c->X == 0x00);
+	cpu_set_flag(c, FLAG_N, c->X & 0x80);
 	return 0;
 }
 
@@ -603,33 +598,33 @@ byte JSR(cpu *c) {
 byte LDA(cpu *c) {
     cpu_decode(c);
 	c->A = c->data_bus;
-	cpu_set_flag(c, c->Z, c->A == 0x00);
-	cpu_set_flag(c, c->N, c->A & 0x80);
+	cpu_set_flag(c, FLAG_Z, c->A == 0x00);
+	cpu_set_flag(c, FLAG_N, c->A & 0x80);
 	return 1;
 }
 
 byte LDX(cpu *c) {
     cpu_decode(c);
 	c->X = c->data_bus;
-	cpu_set_flag(c, c->Z, c->X == 0x00);
-	cpu_set_flag(c, c->N, c->X & 0x80);
+	cpu_set_flag(c, FLAG_Z, c->X == 0x00);
+	cpu_set_flag(c, FLAG_N, c->X & 0x80);
 	return 1;
 }
 
 byte LDY(cpu *c) {
     cpu_decode(c);
 	c->Y = c->data_bus;
-	cpu_set_flag(c, c->Z, c->Y == 0x00);
-	cpu_set_flag(c, c->N, c->Y & 0x80);
+	cpu_set_flag(c, FLAG_Z, c->Y == 0x00);
+	cpu_set_flag(c, FLAG_N, c->Y & 0x80);
 	return 1;
 }
 
 byte LSR(cpu *c) {
     cpu_decode(c);
-	cpu_set_flag(c, c->C, c->data_bus & 0x0001);
+	cpu_set_flag(c, FLAG_C, c->data_bus & 0x0001);
 	byte temp = c->data_bus >> 1;	
-	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
-	cpu_set_flag(c, c->N, temp & 0x0080);
+	cpu_set_flag(c, FLAG_Z, (temp & 0x00FF) == 0x0000);
+	cpu_set_flag(c, FLAG_N, temp & 0x0080);
 	if (c->code[c->IR].addressing_mode == &IMP)
 		c->A = temp & 0x00FF;
 	else
@@ -654,8 +649,8 @@ byte NOP(cpu *c) {
 byte ORA(cpu *c) {
     cpu_decode(c);
 	c->A = c->A | c->data_bus;
-	cpu_set_flag(c, c->Z, c->A == 0x00);
-	cpu_set_flag(c, c->N, c->A & 0x80);
+	cpu_set_flag(c, FLAG_Z, c->A == 0x00);
+	cpu_set_flag(c, FLAG_N, c->A & 0x80);
 	return 1;
 }
 
@@ -666,9 +661,9 @@ byte PHA(cpu *c) {
 }
 
 byte PHP(cpu *c) {
-    cpu_write(c, STACK_BASE + c->SP, c->P | c->B | c->U);
-	cpu_set_flag(c, c->B, 0);
-	cpu_set_flag(c, c->U, 0);
+    cpu_write(c, STACK_BASE + c->SP, c->P | FLAG_B | FLAG_U);
+	cpu_set_flag(c, FLAG_B, 0);
+	cpu_set_flag(c, FLAG_U, 0);
 	c->SP--;
 	return 0;
 }
@@ -676,24 +671,24 @@ byte PHP(cpu *c) {
 byte PLA(cpu *c) {
     c->SP++;
 	c->A = cpu_read(c, STACK_BASE + c->SP);
-	cpu_set_flag(c, c->Z, c->A == 0x00);
-	cpu_set_flag(c, c->N, c->A & 0x80);
+	cpu_set_flag(c, FLAG_Z, c->A == 0x00);
+	cpu_set_flag(c, FLAG_N, c->A & 0x80);
 	return 0;
 }
 
 byte PLP(cpu *c) {
     c->SP++;
 	c->P = cpu_read(c, STACK_BASE + c->SP);
-	cpu_set_flag(c, c->U, 1);
+	cpu_set_flag(c, FLAG_U, 1);
 	return 0;
 }
 
 byte ROL(cpu *c) {
     cpu_decode(c);
-	byte temp = (addr)(c->data_bus << 1) | cpu_get_flag(c, c->C);
-	cpu_set_flag(c, c->C, temp & 0xFF00);
-	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x0000);
-	cpu_set_flag(c, c->N, temp & 0x0080);
+	byte temp = (addr)(c->data_bus << 1) | cpu_get_flag(c, FLAG_C);
+	cpu_set_flag(c, FLAG_C, temp & 0xFF00);
+	cpu_set_flag(c, FLAG_Z, (temp & 0x00FF) == 0x0000);
+	cpu_set_flag(c, FLAG_N, temp & 0x0080);
 	if (c->code[c->IR].addressing_mode == &IMP)
 		c->A = temp & 0x00FF;
 	else
@@ -703,10 +698,10 @@ byte ROL(cpu *c) {
 
 byte ROR(cpu *c) {
     cpu_decode(c);
-	byte temp = (addr)(cpu_get_flag(c, c->C) << 7) | (c->data_bus >> 1);
-	cpu_set_flag(c, c->C, c->data_bus & 0x01);
-	cpu_set_flag(c, c->Z, (temp & 0x00FF) == 0x00);
-	cpu_set_flag(c, c->N, temp & 0x0080);
+	byte temp = (addr)(cpu_get_flag(c, FLAG_C) << 7) | (c->data_bus >> 1);
+	cpu_set_flag(c, FLAG_C, c->data_bus & 0x01);
+	cpu_set_flag(c, FLAG_Z, (temp & 0x00FF) == 0x00);
+	cpu_set_flag(c, FLAG_N, temp & 0x0080);
 	if (c->code[c->IR].addressing_mode == &IMP)
 		c->A = temp & 0x00FF;
 	else
@@ -717,8 +712,8 @@ byte ROR(cpu *c) {
 byte RTI(cpu *c) {
     c->SP++;
 	c->P = cpu_read(c, STACK_BASE + c->SP);
-	c->P &= ~c->B;
-	c->P &= ~c->U;
+	c->P &= ~FLAG_B;
+	c->P &= ~FLAG_U;
 
 	c->SP++;
 	c->PC = (addr)cpu_read(c, STACK_BASE + c->SP);
@@ -746,27 +741,27 @@ byte SBC(cpu *c) {
 	addr value = ((addr)c->data_bus) ^ 0x00FF;
 	
 	// Notice this is exactly the same as addition from here!
-	byte temp = (addr)c->A + value + (addr)cpu_get_flag(c, c->C);
-	cpu_set_flag(c, c->C, temp & 0xFF00);
-	cpu_set_flag(c, c->Z, ((temp & 0x00FF) == 0));
-	cpu_set_flag(c, c->V, (temp ^ (addr)c->A) & (temp ^ value) & 0x0080);
-	cpu_set_flag(c, c->N, temp & 0x0080);
+	byte temp = (addr)c->A + value + (addr)cpu_get_flag(c, FLAG_C);
+	cpu_set_flag(c, FLAG_C, temp & 0xFF00);
+	cpu_set_flag(c, FLAG_Z, ((temp & 0x00FF) == 0));
+	cpu_set_flag(c, FLAG_V, (temp ^ (addr)c->A) & (temp ^ value) & 0x0080);
+	cpu_set_flag(c, FLAG_N, temp & 0x0080);
 	c->A = temp & 0x00FF;
 	return 1;
 }
 
 byte SEC(cpu *c) {
-    cpu_set_flag(c, c->C, true);
+    cpu_set_flag(c, FLAG_C, true);
     return 0;
 }
 
 byte SED(cpu *c) {
-    cpu_set_flag(c, c->D, true);
+    cpu_set_flag(c, FLAG_D, true);
     return 0;
 }
 
 byte SEI(cpu *c) {
-    cpu_set_flag(c, c->I, true);
+    cpu_set_flag(c, FLAG_I, true);
     return 0;
 }
 
@@ -787,30 +782,30 @@ byte STY(cpu *c) {
 
 byte TAX(cpu *c) {
     c->X = c->A;
-	cpu_set_flag(c, c->Z, c->X == 0x00);
-	cpu_set_flag(c, c->N, c->X & 0x80);
+	cpu_set_flag(c, FLAG_Z, c->X == 0x00);
+	cpu_set_flag(c, FLAG_N, c->X & 0x80);
 	return 0;
 }
 
 byte TAY(cpu *c) {
     c->Y = c->A;
-	cpu_set_flag(c, c->Z, c->Y == 0x00);
-	cpu_set_flag(c, c->N, c->Y & 0x80);
+	cpu_set_flag(c, FLAG_Z, c->Y == 0x00);
+	cpu_set_flag(c, FLAG_N, c->Y & 0x80);
 	return 0;
 }
 
 byte TSX(cpu *c) {
     c->SP = c->A & c->X;
     c->X = c->P;
-	cpu_set_flag(c, c->Z, c->X == 0x00);
-	cpu_set_flag(c, c->N, c->X & 0x80);
+	cpu_set_flag(c, FLAG_Z, c->X == 0x00);
+	cpu_set_flag(c, FLAG_N, c->X & 0x80);
 	return 0;
 }
 
 byte TXA(cpu *c) {
     c->A = c->X;
-	cpu_set_flag(c, c->Z, c->A == 0x00);
-	cpu_set_flag(c, c->N, c->A & 0x80);
+	cpu_set_flag(c, FLAG_Z, c->A == 0x00);
+	cpu_set_flag(c, FLAG_N, c->A & 0x80);
 	return 0;
 }
 
@@ -821,8 +816,8 @@ byte TXS(cpu *c) {
 
 byte TYA(cpu *c) {
     c->A = c->Y;
-	cpu_set_flag(c, c->Z, c->A == 0x00);
-	cpu_set_flag(c, c->N, c->A & 0x80);
+	cpu_set_flag(c, FLAG_Z, c->A == 0x00);
+	cpu_set_flag(c, FLAG_N, c->A & 0x80);
 	return 0;
 }
 
@@ -840,9 +835,9 @@ byte ALR(cpu *c) {
     c->A >>= 1;
 
     // Set flags
-    cpu_set_flag(c, c->C, carry);
-    cpu_set_flag(c, c->Z, c->A == 0);
-    cpu_set_flag(c, c->N, c->A & 0x80);
+    cpu_set_flag(c, FLAG_C, carry);
+    cpu_set_flag(c, FLAG_Z, c->A == 0);
+    cpu_set_flag(c, FLAG_N, c->A & 0x80);
 
     return 0; // No extra cycle needed
 }
@@ -852,9 +847,9 @@ byte ANC(cpu *c) {
     c->A &= cpu_read(c, c->address_bus);
 
     // Set Carry and other flags
-    cpu_set_flag(c, c->C, c->A & 0x80);
-    cpu_set_flag(c, c->Z, c->A == 0);
-    cpu_set_flag(c, c->N, c->A & 0x80);
+    cpu_set_flag(c, FLAG_C, c->A & 0x80);
+    cpu_set_flag(c, FLAG_Z, c->A == 0);
+    cpu_set_flag(c, FLAG_N, c->A & 0x80);
 
     return 0; // No extra cycle needed
 }
@@ -866,8 +861,8 @@ byte ANE(cpu *c) {
     c->A &= cpu_read(c, c->address_bus);
 
     // Set flags
-    cpu_set_flag(c, c->Z, c->A == 0);
-    cpu_set_flag(c, c->N, c->A & 0x80);
+    cpu_set_flag(c, FLAG_Z, c->A == 0);
+    cpu_set_flag(c, FLAG_N, c->A & 0x80);
 
     return 0; // No extra cycle needed
 }
@@ -878,12 +873,12 @@ byte ARR(cpu *c) {
     c->A >>= 1;
 
     // Set Carry, Zero, and Negative flags
-    cpu_set_flag(c, c->C, carry);
-    cpu_set_flag(c, c->Z, c->A == 0);
-    cpu_set_flag(c, c->N, c->A & 0x80);
+    cpu_set_flag(c, FLAG_C, carry);
+    cpu_set_flag(c, FLAG_Z, c->A == 0);
+    cpu_set_flag(c, FLAG_N, c->A & 0x80);
 
     // Set Overflow flag
-    cpu_set_flag(c, c->V, ((c->A >> 6) ^ (c->A >> 5)) & 1);
+    cpu_set_flag(c, FLAG_V, ((c->A >> 6) ^ (c->A >> 5)) & 1);
 
     return 0; // No extra cycle needed
 }
@@ -896,9 +891,9 @@ byte DCP(cpu *c) {
     byte temp = c->A - value;
 
     // Set flags
-    cpu_set_flag(c, c->C, c->A >= value);
-    cpu_set_flag(c, c->Z, temp == 0);
-    cpu_set_flag(c, c->N, temp & 0x80);
+    cpu_set_flag(c, FLAG_C, c->A >= value);
+    cpu_set_flag(c, FLAG_Z, temp == 0);
+    cpu_set_flag(c, FLAG_N, temp & 0x80);
 
     return 0; // No extra cycle needed
 }
@@ -908,13 +903,13 @@ byte ISC(cpu *c) {
     cpu_write(c, c->address_bus, value);
 
     // Perform SBC A with memory
-    addr result = (addr)c->A - value - (cpu_get_flag(c, c->C) ? 0 : 1);
+    addr result = (addr)c->A - value - (cpu_get_flag(c, FLAG_C) ? 0 : 1);
 
     // Set flags
-    cpu_set_flag(c, c->C, result <= 0xFF);
-    cpu_set_flag(c, c->Z, (result & 0xFF) == 0);
-    cpu_set_flag(c, c->N, result & 0x80);
-    cpu_set_flag(c, c->V, ((c->A ^ result) & (value ^ result) & 0x80));
+    cpu_set_flag(c, FLAG_C, result <= 0xFF);
+    cpu_set_flag(c, FLAG_Z, (result & 0xFF) == 0);
+    cpu_set_flag(c, FLAG_N, result & 0x80);
+    cpu_set_flag(c, FLAG_V, ((c->A ^ result) & (value ^ result) & 0x80));
 
     c->A = result & 0xFF;
     return 0; // No extra cycle needed
@@ -927,8 +922,8 @@ byte LAS(cpu *c) {
     c->SP = value;
 
     // Set flags
-    cpu_set_flag(c, c->Z, c->A == 0);
-    cpu_set_flag(c, c->N, c->A & 0x80);
+    cpu_set_flag(c, FLAG_Z, c->A == 0);
+    cpu_set_flag(c, FLAG_N, c->A & 0x80);
 
     return 1; // No extra cycle needed
 }
@@ -938,8 +933,8 @@ byte LAX(cpu *c) {
     c->X = c->A;
 
     // Set flags
-    cpu_set_flag(c, c->Z, c->A == 0);
-    cpu_set_flag(c, c->N, c->A & 0x80);
+    cpu_set_flag(c, FLAG_Z, c->A == 0);
+    cpu_set_flag(c, FLAG_N, c->A & 0x80);
 
     return 1; // No extra cycle needed
 }
@@ -951,14 +946,14 @@ byte LXA(cpu *c) {
     c->X = c->A;
 
     // Set flags
-    cpu_set_flag(c, c->Z, c->A == 0);
-    cpu_set_flag(c, c->N, c->A & 0x80);
+    cpu_set_flag(c, FLAG_Z, c->A == 0);
+    cpu_set_flag(c, FLAG_N, c->A & 0x80);
 
     return 0; // No extra cycle needed
 }
 
 byte RLA(cpu *c) {
-    byte carry = cpu_get_flag(c, c->C);
+    byte carry = cpu_get_flag(c, FLAG_C);
     byte value = cpu_read(c, c->address_bus);
     byte new_carry = value & 0x80;
 
@@ -968,28 +963,28 @@ byte RLA(cpu *c) {
     c->A &= value;
 
     // Set flags
-    cpu_set_flag(c, c->C, new_carry);
-    cpu_set_flag(c, c->Z, c->A == 0);
-    cpu_set_flag(c, c->N, c->A & 0x80);
+    cpu_set_flag(c, FLAG_C, new_carry);
+    cpu_set_flag(c, FLAG_Z, c->A == 0);
+    cpu_set_flag(c, FLAG_N, c->A & 0x80);
 
     return 0; // No extra cycle needed
 }
 
 byte RRA(cpu *c) {
-    byte carry = cpu_get_flag(c, c->C);
+    byte carry = cpu_get_flag(c, FLAG_C);
     byte value = cpu_read(c, c->address_bus);
 
     value = (value >> 1) | (carry << 7);
     cpu_write(c, c->address_bus, value);
 
     // Perform ADC A with value
-    addr result = c->A + value + cpu_get_flag(c, c->C);
+    addr result = c->A + value + cpu_get_flag(c, FLAG_C);
 
     // Set flags
-    cpu_set_flag(c, c->C, result > 0xFF);
-    cpu_set_flag(c, c->Z, (result & 0xFF) == 0);
-    cpu_set_flag(c, c->N, result & 0x80);
-    cpu_set_flag(c, c->V, (~(c->A ^ value) & (c->A ^ result) & 0x80));
+    cpu_set_flag(c, FLAG_C, result > 0xFF);
+    cpu_set_flag(c, FLAG_Z, (result & 0xFF) == 0);
+    cpu_set_flag(c, FLAG_N, result & 0x80);
+    cpu_set_flag(c, FLAG_V, (~(c->A ^ value) & (c->A ^ result) & 0x80));
 
     c->A = result & 0xFF;
     return 0; // No extra cycle needed
@@ -1005,9 +1000,9 @@ byte SBX(cpu *c) {
     byte temp = (c->A & c->X) - value;
 
     // Set flags
-    cpu_set_flag(c, c->C, (c->A & c->X) >= value);
-    cpu_set_flag(c, c->Z, temp == 0);
-    cpu_set_flag(c, c->N, temp & 0x80);
+    cpu_set_flag(c, FLAG_C, (c->A & c->X) >= value);
+    cpu_set_flag(c, FLAG_Z, temp == 0);
+    cpu_set_flag(c, FLAG_N, temp & 0x80);
 
     c->X = temp;
     return 0; // No extra cycle needed
@@ -1041,9 +1036,9 @@ byte SLO(cpu *c) {
     c->A |= value;
 
     // Set flags
-    cpu_set_flag(c, c->C, carry);
-    cpu_set_flag(c, c->Z, c->A == 0);
-    cpu_set_flag(c, c->N, c->A & 0x80);
+    cpu_set_flag(c, FLAG_C, carry);
+    cpu_set_flag(c, FLAG_Z, c->A == 0);
+    cpu_set_flag(c, FLAG_N, c->A & 0x80);
 
     return 0; // No extra cycle needed
 }
@@ -1058,9 +1053,9 @@ byte SRE(cpu *c) {
     c->A ^= value;
 
     // Set flags
-    cpu_set_flag(c, c->C, carry);
-    cpu_set_flag(c, c->Z, c->A == 0);
-    cpu_set_flag(c, c->N, c->A & 0x80);
+    cpu_set_flag(c, FLAG_C, carry);
+    cpu_set_flag(c, FLAG_Z, c->A == 0);
+    cpu_set_flag(c, FLAG_N, c->A & 0x80);
 
     return 0; // No extra cycle needed
 }

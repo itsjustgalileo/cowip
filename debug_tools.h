@@ -12,6 +12,6 @@ typedef struct cpu cpu;
 
 void throw_exception(const int error);
 void print_binary(unsigned char value);
-void debug_print_CPU(const struct cpu *c);
+void debug_print_CPU(struct cpu *c);
 
 #endif // DEBUG_TOOLS_H

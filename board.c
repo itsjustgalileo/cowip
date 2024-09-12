@@ -26,6 +26,9 @@ Board *board_init(const char *rom_path) {
     FILE *file;
     size_t bytesRead;
 
+    if(rom_path == NULL) {
+        rom_path = "./roms/reset.bin";
+    }
     // Open the binary file in read-binary mode
     file = fopen(rom_path, "rb");
     if (file == NULL) {

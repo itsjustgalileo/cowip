@@ -2,7 +2,7 @@
 #define BOARD_H_
 
 #include "./arch.h"
-#include "./crystos.h"
+#include "./clock.h"
 #include "./cpu.h"
 
 typedef struct Board {

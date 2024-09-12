@@ -28,7 +28,7 @@ void print_binary(unsigned char value) {
 }
 
 // Debug print function for the cpu structure
-void debug_print_CPU(const struct cpu *c) {
+void debug_print_CPU(struct cpu *c) {
     printf("Instruction Register (IR): %02X\n", c->IR);
     printf("Accumulator (A): %02X\n", c->A);
     printf("Index Register X: %02X\n", c->X);
@@ -39,14 +39,14 @@ void debug_print_CPU(const struct cpu *c) {
     print_binary(c->P);
     printf(")\n");
     
-    printf("  Carry (C): %d\n", c->C);
-    printf("  Zero (Z): %d\n", c->Z);
-    printf("  Interrupt (I): %d\n", c->I);
-    printf("  Decimal (D): %d\n", c->D);
-    printf("  Break (B): %d\n", c->B);
-    printf("  Unused (U): %d\n", c->U);
-    printf("  Overflow (V): %d\n", c->V);
-    printf("  Negative (N): %d\n", c->N);
+    printf("  Carry (C): %d\n", cpu_get_flag(c, FLAG_C));
+    printf("  Zero (Z): %d\n", cpu_get_flag(c, FLAG_Z));
+    printf("  Interrupt (I): %d\n", cpu_get_flag(c, FLAG_I));
+    printf("  Decimal (D): %d\n", cpu_get_flag(c, FLAG_D));
+    printf("  Break (B): %d\n", cpu_get_flag(c, FLAG_B));
+    printf("  Unused (U): %d\n", cpu_get_flag(c, FLAG_U));
+    printf("  Overflow (V): %d\n", cpu_get_flag(c, FLAG_V));
+    printf("  Negative (N): %d\n", cpu_get_flag(c, FLAG_N));
     
     printf("Program Counter (PC): %04X\n", c->PC);
     printf("Cycles: %d\n", c->cycles);

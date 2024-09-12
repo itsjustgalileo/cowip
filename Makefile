@@ -10,7 +10,7 @@ INC_DIR = .
 # Source files
 SRCS = $(SRC_DIR)/cpu.c \
        $(SRC_DIR)/board.c \
-       $(SRC_DIR)/crystos.c \
+       $(SRC_DIR)/clock.c \
        $(SRC_DIR)/debug_tools.c \
        $(SRC_DIR)/main.c \
 
